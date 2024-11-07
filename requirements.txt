@@ -1,0 +1,43 @@
+# req for ttfs
+jupyter
+matplotlib
+scipy
+numpy
+# for gpu users
+#tensorflow-gpu
+# for cpu-only users
+tensorflow
+# reg for lava
+networkx
+asteval
+scikit-learn
+bandit 
+coverage 
+darglint 
+flake8 
+flake8-bandit 
+flake8-bugbear 
+flake8-builtins 
+flake8-comprehensions 
+flake8-docstrings 
+flake8-eradicate 
+flake8-isort 
+flake8-mutable 
+flake8-pytest-style 
+flake8-spellcheck 
+flakeheaven
+matplotlib 
+pep8-naming 
+poetry
+unittest2 
+pandas 
+pytest 
+pytest-cov 
+sphinx 
+sphinx-tabs 
+sphinx_rtd_theme 
+autopep8 
+ipykernel 
+nbformat
+nbconvert
+

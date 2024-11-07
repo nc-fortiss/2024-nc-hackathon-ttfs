@@ -1,0 +1,7 @@
+INFO:root:#### Creating the model ####
+INFO:root:#### Setting SNN intervals ####
+INFO:root:#### Initial test set accuracy testing ####
+INFO:root:Initial testing accuracy is [2.334572949237058, 2.334572949237058, 0.1393].
+INFO:root:#### Training ####
+INFO:root:#### Final test set accuracy testing ####
+INFO:root:Final testing accuracy is [0.10474228414475126, 0.10474228414475126, 0.9668].
