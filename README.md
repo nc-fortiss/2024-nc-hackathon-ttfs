@@ -1,9 +1,10 @@
 # 2024-nc-hackathon-ttfs
 
-prerequisites:
-Ubuntu20.04+, python3, pip
+##Prerequisites:
+Ubuntu20.04+, python3, pip, git, python3-venv
 
-Get Started
+
+##Get Started
 
 1. Clone reposity
 2. Create virtual environment: python3 -m venv nc-hack-venv
@@ -13,15 +14,18 @@ Get Started
 6. Install libraries: pip install -r requirements.txt
 
 
-Test time-to-first-spike setup:
+##Test time-to-first-spike setup:
+
 1. cd equivalent-training-ReLUnetwork-SNN/
 2. python main.py --model_type=SNN --model_name=FC2_example_train --data_name=MNIST --epochs=1
 
-Test lava setup:
+##Test lava setup:
+
 1. export PYTHONPATH=$PWD/lava/src
 2. jupyter notebook
 3. Navigate to tutorials and run in_depth -> tutorial02
 
+## Traffic Sign Dataset
 
 Hints for GTSRB are available here: https://benchmark.ini.rub.de/gtsrb_dataset.html
 
