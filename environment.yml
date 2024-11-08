@@ -1,0 +1,23 @@
+name: nc-hackathon
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - matplotlib=3.6.2
+  - python=3.8.16
+  - scipy=1.9.3
+  - pip=22.3.1
+  - setuptools=70.0
+  - pip:
+      - numpy==1.19.5
+      - tensorflow-gpu==2.4.1
+      #- tensorflow==2.4.1
+      - networkx
+      - asteval
+      - scikit-learn
+      - pandas 
+      - jupyter
+      #- ipykernel 
+      - nbformat
+      - nbconvert
+

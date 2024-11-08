@@ -1,17 +1,24 @@
 # 2024-nc-hackathon-ttfs
 
 ##Prerequisites:
-Ubuntu20.04+, python3, pip, git, python3-venv
+Ubuntu20.04+, python3, pip, git, conda
+
+For installing conda:
+mkdir -p ~/miniconda3
+wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda3/miniconda.sh
+bash ~/miniconda3/miniconda.sh -b -u -p ~/miniconda3
+rm ~/miniconda3/miniconda.sh
+source ~/miniconda3/bin/activate
+
+Or follow: https://docs.anaconda.com/miniconda/
 
 
 ##Get Started
 
 1. Clone reposity
-2. Create virtual environment: python3 -m venv nc-hack-venv
-3. Activate virtual environment: source nc-hack-venv/bin/activate
+2. Create conda environment: conda env create -f environment.yml
+3. Activate conda environment: conda activate nc-hackathon
 4. Step into repository: cd 2024-nc-hackathon-ttfs
-5. Uncomment tensorflow option in requirements.txt
-6. Install libraries: pip install -r requirements.txt
 
 
 ##Test time-to-first-spike setup:
@@ -22,7 +29,7 @@ Ubuntu20.04+, python3, pip, git, python3-venv
 ##Test lava setup:
 
 1. export PYTHONPATH=$PWD/lava/src
-2. jupyter notebook
+2. jupyter lab
 3. Navigate to tutorials and run in_depth -> tutorial02
 
 ## Traffic Sign Dataset
