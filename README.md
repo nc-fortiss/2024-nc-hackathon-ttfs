@@ -4,33 +4,35 @@
 Ubuntu20.04+, python3, pip, git, conda
 
 For installing conda:
+```
 mkdir -p ~/miniconda3
 wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda3/miniconda.sh
 bash ~/miniconda3/miniconda.sh -b -u -p ~/miniconda3
 rm ~/miniconda3/miniconda.sh
 source ~/miniconda3/bin/activate
+```
 
 Or follow: https://docs.anaconda.com/miniconda/
 
 
-##Get Started
+## Get Started
 
 1. Clone reposity
-2. Step into repository: cd 2024-nc-hackathon-ttfs
-2. Create conda environment: conda env create -f environment.yml
-3. Activate conda environment: conda activate nc-hackathon
+2. Step into repository: `cd 2024-nc-hackathon-ttfs`
+2. Create conda environment: `conda env create -f environment.yml`
+3. Activate conda environment: `conda activate nc-hackathon`
 
 
-##Test time-to-first-spike setup:
+## Test time-to-first-spike setup:
 
-1. cd equivalent-training-ReLUnetwork-SNN/
-2. python main.py --model_type=SNN --model_name=FC2_example_train --data_name=MNIST --epochs=1
+1. `cd equivalent-training-ReLUnetwork-SNN/`
+2. `python main.py --model_type=SNN --model_name=FC2_example_train --data_name=MNIST --epochs=1`
 
-##Test lava setup:
+## Test lava setup:
 
 1. Make sure your current path is the repository directory: 2024-nc-hackathon-ttfs
-2. export PYTHONPATH=$PWD/lava/src
-3. jupyter lab
+2. `export PYTHONPATH=$PWD/lava/src`
+3. `jupyter lab`
 4. Navigate to tutorials and run in_depth -> tutorial02
 
 ## Traffic Sign Dataset
