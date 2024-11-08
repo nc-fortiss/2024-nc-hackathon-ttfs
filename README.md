@@ -1,6 +1,6 @@
 # 2024-nc-hackathon-ttfs
 
-##Prerequisites:
+## Prerequisites:
 Ubuntu20.04+, python3, pip, git, conda
 
 For installing conda:
