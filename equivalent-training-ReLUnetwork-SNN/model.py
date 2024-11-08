@@ -27,7 +27,7 @@ class SpikingDense(tf.keras.layers.Layer):
         # In case this is the first dense layer after Flatten layer.
         if input_dim[-1] is None: input_dim=(None, self.input_dim)
         self.kernel = self.add_weight(shape=(input_dim[-1], self.units), name='kernel', regularizer=self.regularizer, initializer=self.initializer)
-        self.D_i = self.add_weight(shape=(self.units), initializer=tf.constant_initializer(0), name='D_i')
+        self.D_i = self.add_weight(shape=(self.units,), initializer=tf.constant_initializer(0), name='D_i')
         self.built = True
     
     def set_params(self, t_min_prev, t_min):
@@ -274,7 +274,7 @@ def create_fc_model_ReLU(layers = 2, optimizer='adam'):
     """
     Create a 2-layer fully-connected ReLU network to for MNIST dataset.
     """
-    inputs = Input(shape=(784))
+    inputs = Input(shape=(784,))
     x = Dense(340, activation=None, name='dense_1')(inputs)
     x = tf.keras.layers.Activation('relu')(x)
     for i in range(layers-2):
@@ -291,17 +291,22 @@ def create_fc_model_SNN(layers, optimizer, X_n=1000, robustness_params={}):
     Create 2-layer fully connected network. Tested on MNIST dataset.
     """
     min_ti=[]
-    tj = Input(shape=784)
+    tj = Input(shape=(784,))
     ti = SpikingDense(340, 'dense_1', X_n, robustness_params=robustness_params)(tj)
-    min_ti.append(tf.reduce_min(ti))
+    #min_ti.append(tf.reduce_min(ti))
+    min_ti.append(ReduceMin()(ti))
     for i in range(layers-2):
         ti = SpikingDense(340, 'dense_' + str(i+2), X_n, robustness_params=robustness_params)(ti)
-        min_ti.append(tf.reduce_min(ti))
+        #min_ti.append(tf.reduce_min(ti))
+        min_ti.append(ReduceMin()(ti))
     outputs = SpikingDense(10, 'dense_output', outputLayer=True, robustness_params=robustness_params)(ti)
     model = ModelTmax (inputs=tj, outputs=[outputs, min_ti])
     model.compile(metrics=['accuracy'], loss=tf.keras.losses.CategoricalCrossentropy(from_logits=True), optimizer=optimizer)
     return model
 
+class ReduceMin(tf.keras.layers.Layer):
+    def call(self, x):
+        return tf.reduce_min(x)
 
 def call_spiking(tj, W, D_i, t_min, t_max, noise):
     """
