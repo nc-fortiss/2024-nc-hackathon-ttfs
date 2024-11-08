@@ -16,9 +16,9 @@ Or follow: https://docs.anaconda.com/miniconda/
 ##Get Started
 
 1. Clone reposity
+2. Step into repository: cd 2024-nc-hackathon-ttfs
 2. Create conda environment: conda env create -f environment.yml
 3. Activate conda environment: conda activate nc-hackathon
-4. Step into repository: cd 2024-nc-hackathon-ttfs
 
 
 ##Test time-to-first-spike setup:
@@ -28,9 +28,10 @@ Or follow: https://docs.anaconda.com/miniconda/
 
 ##Test lava setup:
 
-1. export PYTHONPATH=$PWD/lava/src
-2. jupyter lab
-3. Navigate to tutorials and run in_depth -> tutorial02
+1. Make sure your current path is the repository directory: 2024-nc-hackathon-ttfs
+2. export PYTHONPATH=$PWD/lava/src
+3. jupyter lab
+4. Navigate to tutorials and run in_depth -> tutorial02
 
 ## Traffic Sign Dataset
 
