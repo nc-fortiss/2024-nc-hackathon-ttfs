@@ -6,6 +6,7 @@ from utils import *
 tf.keras.backend.set_floatx('float64')
 
 
+
 class SpikingDense(tf.keras.layers.Layer):
     def __init__(self, units, name, X_n=1, outputLayer=False, robustness_params={}, input_dim=None,
                  kernel_regularizer=None, kernel_initializer=None):
@@ -18,6 +19,7 @@ class SpikingDense(tf.keras.layers.Layer):
         self.input_dim=input_dim
         self.regularizer = kernel_regularizer
         self.initializer = kernel_initializer
+
         super(SpikingDense, self).__init__(name=name)
     
     def build(self, input_dim):
@@ -135,6 +137,8 @@ class SpikingConv2D(tf.keras.layers.Layer):
 class ModelTmax(tf.keras.Model):
     def __init__(self, **kwargs):
         super(ModelTmax, self).__init__(**kwargs)
+        self.t_min_overall = float('inf')
+        
 
     def train_step(self, data):
         x, y_all = data
@@ -145,6 +149,7 @@ class ModelTmax(tf.keras.Model):
         gradients = tape.gradient(loss, trainable_vars)
         self.optimizer.apply_gradients(zip(gradients, trainable_vars))
         t_min_prev, t_min, k=0.0, 1.0, 0
+    
         for layer in self.layers:
             if 'conv' in layer.name or 'dense' in layer.name: 
                 try:
@@ -157,6 +162,14 @@ class ModelTmax(tf.keras.Model):
                 t_min_prev, t_min = t_min, t_max
                 if k==len(y_pred_all[1]): break
                 k+=1
+
+                # print(type(t_min))
+                #print(type(self.t_min_overall))
+                #print(type(layer.t_min))
+                #print(type(tf.cast(layer.t_min, dtype=tf.float64)))
+                #print(type(float(layer.t_min.numpy())))
+                #self.t_min_overall = min(self.t_min_overall,tf.cast(layer.t_min, dtype=tf.float64))
+
         self.compiled_metrics.update_state(y_all, y_pred_all[0])
         return {m.name: m.result() for m in self.metrics}
     
@@ -230,6 +243,10 @@ def create_vgg_model_SNN(layers2D, kernel_size, layers1D, data, optimizer, X_n=1
                        kernel_regularizer=kernel_regularizer, kernel_initializer=kernel_initializer,
                        padding='same', kernel_size=kernel_size,
                        robustness_params=robustness_params)(tj)
+
+    # Change here
+    tf.print("After conv2d_1, ti for batch 3: :", ti[3])
+
     min_ti.append(tf.reduce_min(ti))
     j, image_size =1, data.input_shape[0]
     for f in layers2D[1:]:
@@ -247,6 +264,10 @@ def create_vgg_model_SNN(layers2D, kernel_size, layers1D, data, optimizer, X_n=1
                      kernel_regularizer=kernel_regularizer, kernel_initializer=kernel_initializer,
                      robustness_params=robustness_params, input_dim=(image_size**2)*layers2D[-2])(ti)
     min_ti.append(tf.reduce_min(ti))
+
+    # CHange here
+    tf.print("After dense_1, ti for batch:", ti[3])
+
     j, k=j+1, 0
     for k, d in enumerate(layers1D[1:]):
         i_dense +=1
@@ -317,10 +338,30 @@ def call_spiking(tj, W, D_i, t_min_prev, t_min, t_max, robustness_params):
     threshold = t_max - t_min - D_i
     # Calculate output spiking time ti (Eq. 7)
     ti = (tf.matmul(tj-t_min, W) + threshold + t_min)
+
+    # print(f"First 5 floats from ti: {ti[:5][0]}")
+
+    # print(f"################### - {ti[:5]} - #######################")
+    # output_tensor = model(input_data)
+    # first_five_entries = output_tensor[:5]
+
+
+
     # Ensure valid spiking time. Do not spike for ti >= t_max.
     # No spike is modelled as t_max that cancels out in the next layer (tj-t_min) as t_min there is t_max
     ti = tf.where(ti < t_max, ti, t_max)
     # Add noise to the spiking time for noise simulations
     ti = ti + tf.random.normal(tf.shape(ti), stddev=robustness_params['noise'], dtype=tf.dtypes.float64)
+
+    # print("######################################################################################")
+    # print(ti.shape)
+    # print(ti)
+
+    # tf.print("First 5 floats from ti:", ti[0].shape)
+
+
+   # print(tf.__version__)
+   
+
     return ti
 

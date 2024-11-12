@@ -197,9 +197,16 @@ if 'SNN' in args.model_type:
     # print(output[0][0])
     X_n = list(map(lambda x: np.max(x), output))
 
-    plt.hist(output[0], bins=100)
-    plt.save("test.jpg")
+    print("----------")
+    print(model.t_min_overall)
 
+    plt.hist(output[0], bins=20, alpha=0.7)
+    # plt.xlim(1490, 15)
+    plt.title('Output Histogram')
+    plt.xlabel('Time')
+    plt.ylabel('Value Counts')
+    plt.legend()
+    plt.grid(True)
     plt.show()
 
 
