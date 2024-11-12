@@ -9,6 +9,7 @@ import time
 start_time = time.time()
 tf.keras.backend.set_floatx('float64') #to avoid numerical differences when comparing training of ReLU vs SNN
 override = None
+import matplotlib.pyplot as plt
 
 strtobool = (lambda s: s=='True')
 parser = argparse.ArgumentParser(description='TTFS')
@@ -111,8 +112,12 @@ if 'SNN' in args.model_type:
     # Set parameters of SNN network: t_min_prev, t_min, t_max.
     t_min, t_max = 0, 1  # for the input layer
     for layer in model.layers:
+        print(f"************* Layer = {layer}")
         if 'conv' in layer.name or 'dense' in layer.name:
-            t_min, t_max = layer.set_params(t_min, t_max)
+            
+            t_min, t_max = layer.set_params(t_min, t_max) 
+
+
 
 if args.testing:
     logging.info("#### Initial test set accuracy testing ####")
@@ -154,17 +159,51 @@ if args.save and 'ReLU' in args.model_type:
     # 3. Find maximum layer outputs.
     logging.info('calculating maximum layer output...')
     layer_num, X_n = 0, []
-    layers_max = []
+    layers_max, spike_times = [], []
     for k, layer in enumerate(model.layers):
         if 'conv' in layer.name or 'dense' in layer.name:
             if k!=len(model.layers)-2:
                 # Calculate X_n of the current layer.
-                layers_max.append(tf.reduce_max(tf.nn.relu(layer.output)))
-    extractor = tf.keras.Model(inputs=model.inputs, outputs=layers_max)
+                # layers_max.append(tf.reduce_max(tf.nn.relu(layer.output)))
+                spike_times.append(layer.output)
+                
+    
+    extractor = tf.keras.Model(inputs=model.inputs, outputs=spike_times)
     output = extractor.predict(data.x_train, batch_size=64, verbose=1)
+    print(type(output[0]))
+    print(output[0].shape)
     X_n = list(map(lambda x: np.max(x), output))
     logging.info('X_n: %s', X_n)
     pkl.dump(X_n, open(args.logging_dir + '/' + args.model_name + '_X_n.pkl', 'wb'))
     logging.info('saved maximum layer output')
+
+
+if 'SNN' in args.model_type:
+    spike_times = []
+    for k, layer in enumerate(model.layers):
+        if 'conv' in layer.name or 'dense' in layer.name:
+            # if k!=len(model.layers)-2:
+                # Calculate X_n of the current layer.
+                # layers_max.append(tf.reduce_max(tf.nn.relu(layer.output)))
+                spike_times.append(layer.output)
+                
+    extractor = tf.keras.Model(inputs=model.inputs, outputs=spike_times)
+    output = extractor.predict(data.x_train, batch_size=64, verbose=1)
+    print(type(output[0]))
+    print(len(output))
+    print(output[0].shape)
+    print(output[1].shape)
+    # print(output[2].shape)
+    # print(output[0][0])
+    X_n = list(map(lambda x: np.max(x), output))
+
+    plt.hist(output[0], bins=100)
+    plt.save("test.jpg")
+
+    plt.show()
+
+
+
+
 
 print('### Total elapsed time [s]:', time.time() - start_time)
