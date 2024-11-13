@@ -62,7 +62,7 @@ class SpikingConv2D(tf.keras.layers.Layer):
         self.initializer = kernel_initializer
         self.B_n = (1 + 0.5) * X_n
         self.t_min_prev, self.t_min, self.t_max=0, 0, 1
-        self.robustness_params=robustness_params['time_bits']
+        self.robustness_params=robustness_params #['time_bits']
         self.alpha = tf.cast(tf.fill((filters, ), 1), dtype=tf.float64)
         super(SpikingConv2D, self).__init__(name=name)
     
