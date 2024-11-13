@@ -12,7 +12,7 @@ override = None
 
 strtobool = (lambda s: s=='True')
 parser = argparse.ArgumentParser(description='TTFS')
-parser.add_argument('--data_name', type=str, default='MNIST', help='(MNIST|CIFAR10|CIFAR100)')
+parser.add_argument('--data_name', type=str, default='MNIST', help='(GTSRB|MNIST|CIFAR10|CIFAR100)')
 parser.add_argument('--logging_dir', type=str, default='./logs/', help='Directory for logging')
 parser.add_argument('--model_type', type=str, default='SNN', help='(SNN|ReLU)')
 parser.add_argument('--model_name', type=str, default='FC2', help='Should contain (FC2|VGG[BN]): e.g. VGG_BN_test1')
@@ -36,13 +36,15 @@ if(len(args[1])>0):
 args = args[0]
 args.model_name = args.data_name + '-' + args.model_name
 set_up_logging(args.logging_dir, args.model_name)
+
+# CHECK QUANTAZATION
 robustness_params={
     'noise':args.noise,
-    'time_bits':args.time_bits,
-    'weight_bits': args.weight_bits,
+    'time_bits':args.time_bits, # TIMESTAMPS PER LAYER
+    'weight_bits': args.weight_bits, # 8 bits ?
     'w_min': args.w_min,
     'w_max': args.w_max,
-    'latency_quantiles':args.latency_quantiles
+    'latency_quantiles':args.latency_quantiles # use in call_spikes 
 }
 
 # Create data object
@@ -67,9 +69,12 @@ if 'VGG' in args.model_name:
     if 'MNIST' in args.data_name: #MNIST / FMNIST
         layers2D=[64, 64,       128, 128, 'pool', 256, 256, 256, 'pool', 512, 512, 512, 'pool', 512, 512, 512, 'pool']
         layers1D=[512, 512]
-    else:  #other: CIFAR10, CIFAR100
+    elif 'CIFAR10' or 'CIFAR100':
         layers2D = [64, 64, 'pool', 128, 128, 'pool', 256, 256, 256, 'pool', 512, 512, 512, 'pool', 512, 512, 512, 'pool']
         layers1D=[512]
+    elif 'GTSRB': 
+        layers2D = [64, 64, 128, 128, 'pool', 256, 256, 'pool', 512, 512, 'pool']
+        layers1D = [256]
     kernel_size=(3,3)
     regularizer = None
     initializer = 'glorot_uniform' # keras default
