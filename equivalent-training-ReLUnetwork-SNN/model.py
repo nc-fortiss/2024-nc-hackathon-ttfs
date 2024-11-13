@@ -105,7 +105,7 @@ class SpikingConv2D(tf.keras.layers.Layer):
         if self.padding=='valid' or self.BN!=1 or self.BN_before_ReLU==1: 
             # In this case the threshold is the same for whole input image.
             tj = tf.reshape(tj, (-1, tf.shape(W)[0]))
-            ti = call_spiking(tj, W, self.D_i[0], self.t_min_prev, self.t_min, self.t_max, noise=self.noise)
+            ti = call_spiking(tj, W, self.D_i[0], self.t_min_prev, self.t_min, self.t_max, self.robustness_params)
             fig, ax = plot_distribution(ti, title='Distribution of spiking times', xlabel='Spiking time', ylabel='Frequency', t_min=self.t_min, t_max=self.t_max)
             self.plots.append((fig, ax))
             # Layer output is reshaped back.
@@ -120,7 +120,7 @@ class SpikingConv2D(tf.keras.layers.Layer):
             for i, tj_part in enumerate(tj_partitioned):
                 # Iterate over 9 different partitions and call call_spiking with different threshold value.
                 tj_part = tf.reshape(tj_part, (-1, tf.shape(W)[0]))
-                ti_part = call_spiking(tj_part, W, self.D_i[i], self.t_min_prev, self.t_min, self.t_max, noise=self.noise)
+                ti_part = call_spiking(tj_part, W, self.D_i[i], self.t_min_prev, self.t_min, self.t_max, self.robustness_params)
                 fig, ax = plot_distribution(ti_part, title='Distribution of spiking times', xlabel='Spiking time', ylabel='Frequency', t_min=self.t_min, t_max=self.t_max)
                 self.plots.append((fig, ax))
                 # Partitions are reshaped back.
