@@ -57,12 +57,14 @@ data = Dataset(
 # Get optimizer for training.
 optimizer = get_optimizer(args.lr)
 model = None
+layer_num = 5
 logging.info("#### Creating the model ####")
 if 'FC2' in args.model_name:
     if 'SNN' in args.model_type:
+
         model = create_fc_model_SNN(layers=2, optimizer=optimizer, robustness_params=robustness_params)
     if 'ReLU' in args.model_type:
-        model = create_fc_model_ReLU(layers=2, optimizer=optimizer)
+        model = create_fc_model_ReLU(layers=layer_num, optimizer=optimizer)
 if 'VGG' in args.model_name:
     # We consider one architecture, a 15-layer VGG-like network.
     if 'MNIST' in args.data_name: #MNIST / FMNIST
@@ -103,6 +105,9 @@ if args.load != 'False':
         # Load X ranges
         #if os.path.exists(args.logging_dir + args.model_name + '_X_n.pkl'):
         X_n=pkl.load(open(args.logging_dir + args.model_name + '_X_n.pkl', 'rb'))
+        if 'FC2' in args.model_name:
+            model = create_fc_model_SNN(layers=layer_num, optimizer=optimizer, X_n=X_n, robustness_params=robustness_params)
+            print("Loaded X_n from ReLU for SNN model", X_n)
         # else:
         #     X_n=1000
         model.load_weights(args.logging_dir + args.model_name + '_preprocessed.h5', by_name=True)
@@ -117,7 +122,7 @@ if 'SNN' in args.model_type:
             
             t_min, t_max = layer.set_params(t_min, t_max) 
 
-
+ 
 
 if args.testing:
     logging.info("#### Initial test set accuracy testing ####")
@@ -164,15 +169,24 @@ if args.save and 'ReLU' in args.model_type:
         if 'conv' in layer.name or 'dense' in layer.name:
             if k!=len(model.layers)-2:
                 # Calculate X_n of the current layer.
-                # layers_max.append(tf.reduce_max(tf.nn.relu(layer.output)))
-                spike_times.append(layer.output)
+                layers_max.append(tf.reduce_max(tf.nn.relu(layer.output)))
+                
                 
     
-    extractor = tf.keras.Model(inputs=model.inputs, outputs=spike_times)
-    output = extractor.predict(data.x_train, batch_size=64, verbose=1)
-    print(type(output[0]))
-    print(output[0].shape)
-    X_n = list(map(lambda x: np.max(x), output))
+    extractor_X_n = tf.keras.Model(inputs=model.inputs, outputs=layers_max)
+    output_X_n = extractor_X_n.predict(data.x_train, batch_size=64, verbose=1)
+
+    print(type(output_X_n[0]))
+    # output_X_n has two elements, one for each layer. Each element is a list max activations 
+    # of all training samples, with one value for each sample. 
+    print("""""""""""""")
+    print("Length of output_X_n: ", len(output_X_n))
+    print("Shape of output_X_n[0]: ", output_X_n[0].shape)
+ 
+    X_n = list(map(lambda x: np.max(x), output_X_n))
+    print("Length of X_n: ", len(X_n))
+    print("Type of X_n: ", type(X_n))
+    print("X_n: ", X_n)
     logging.info('X_n: %s', X_n)
     pkl.dump(X_n, open(args.logging_dir + '/' + args.model_name + '_X_n.pkl', 'wb'))
     logging.info('saved maximum layer output')
@@ -180,27 +194,53 @@ if args.save and 'ReLU' in args.model_type:
 
 if 'SNN' in args.model_type:
     spike_times = []
+    layers_max = []
+
+    
+    print("Model name: ", args.model_name)
+
+    # Uncomment to load X_n of the ReLU model.
+    """
+    tmp_model_name = ("_").join(args.model_name.split('_')[:-1])
+    with open(args.logging_dir  + tmp_model_name + '_X_n.pkl', 'rb') as file:
+        X_n_loaded = pkl.load(file)
+        if X_n_loaded is not None:
+            print("X_n from ReLU loaded successfully.")
+            print("Max_activations for each layer are:", X_n_loaded)
+
+    """
+    
+    adjusted_spike_times = []
     for k, layer in enumerate(model.layers):
         if 'conv' in layer.name or 'dense' in layer.name:
-            # if k!=len(model.layers)-2:
-                # Calculate X_n of the current layer.
-                # layers_max.append(tf.reduce_max(tf.nn.relu(layer.output)))
-                spike_times.append(layer.output)
+            spike_times.append(layer.output)
+            adjusted_spike_times.append(layer.output)
+        
                 
     extractor = tf.keras.Model(inputs=model.inputs, outputs=spike_times)
     output = extractor.predict(data.x_train, batch_size=64, verbose=1)
+
+    # for adjusted spike timings 
+    extractor_adjusted = tf.keras.Model(inputs=model.inputs, outputs=adjusted_spike_times)
+    output_adjusted = extractor_adjusted.predict(data.x_train, batch_size=64, verbose=1)
+    
+    
     print(type(output[0]))
     print(len(output))
     print(output[0].shape)
-    print(output[1].shape)
+    #print(output[1].shape)
     # print(output[2].shape)
     # print(output[0][0])
     X_n = list(map(lambda x: np.max(x), output))
 
+    # Uncomment to load X_n of the ReLU model.
+    #X_n = X_n_loaded
+
     print("----------")
     print(model.t_min_overall)
 
-    plt.hist(output[0], bins=20, alpha=0.7)
+    """
+    plt.hist(output[1].flatten(), bins=20, alpha=1)
     # plt.xlim(1490, 15)
     plt.title('Output Histogram')
     plt.xlabel('Time')
@@ -208,9 +248,36 @@ if 'SNN' in args.model_type:
     plt.legend()
     plt.grid(True)
     plt.show()
+    """
+    plt.figure(figsize=(10, 6))
 
+    y_lim_max = float(10000)
+    print("Length of output_adjusted: ", len(output_adjusted))
+    for i in range(len(output_adjusted)):
+        print(output_adjusted[i].shape)
+        plt.hist(output_adjusted[i].flatten(), bins=20, alpha=0.5)
+        """
+         curr = output_adjusted[i].flatten()
+        sorted_curr = np.sort(curr)
+        y_lim_max = np.min(y_lim_max, sorted_curr[-2])
+        """
+       
+    
+    plt.xlim(0, np.max(output_adjusted[layer_num - 2]) + 100)
+    
+    # crop y-axis to see the distribution better since there are some outliers (= no spikes)
+    plt.ylim(0, 0.25 * 1e7)
+    
 
-
+    # plt.xlim(1490, 15)
+    plt.title('Output Histogram')
+    plt.xlabel('Time')
+    plt.ylabel('Value Counts')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+    
+    
 
 
 print('### Total elapsed time [s]:', time.time() - start_time)
