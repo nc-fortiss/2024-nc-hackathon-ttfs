@@ -43,6 +43,7 @@ class SpikingDense(tf.keras.layers.Layer):
         Input spiking times tj, output spiking times ti or the value of membrane potential in case of output layer. 
         """
         output = call_spiking(tj, self.kernel, self.D_i, self.t_min_prev, self.t_min, self.t_max, self.robustness_params)
+    
         # In case of the output layer a simple integration is applied without spiking. 
         if self.outputLayer:
             # Read out the value of membrane potential at time t_min.
@@ -153,7 +154,8 @@ class ModelTmax(tf.keras.Model):
         for layer in self.layers:
             if 'conv' in layer.name or 'dense' in layer.name: 
                 try:
-                    t_max=t_min + tf.maximum(tf.cast(layer.t_max-layer.t_min, dtype=tf.float64), 10.0*(layer.t_max-tf.reduce_min(y_pred_all[1][k])))
+                    t_max= t_min + tf.maximum(tf.cast(layer.t_max-layer.t_min, dtype=tf.float64), 10.0*(layer.t_max-tf.reduce_min(y_pred_all[1][k])))
+                    # t_max = tf.cast(layer.t_max-layer.t_min, dtype=tf.float64)
                 except IndexError:
                     t_max=0
                 layer.t_min_prev.assign(t_min_prev)
@@ -335,9 +337,12 @@ def call_spiking(tj, W, D_i, t_min_prev, t_min, t_max, robustness_params):
         W = tf.cast(W, tf.float64)
 
     # Calculate the spiking threshold (Eq. 18)
-    threshold = t_max - t_min - D_i
+    threshold_old = t_max - t_min - D_i
+    threshold_shifted = tf.reduce_max(tf.abs(tf.matmul(tj - t_min, W)))
+    shift = threshold_old - threshold_shifted
     # Calculate output spiking time ti (Eq. 7)
-    ti = (tf.matmul(tj-t_min, W) + threshold + t_min)
+    ti = (tf.matmul(tj-t_min, W) + threshold_shifted + t_min)
+    t_max_new = t_max - shift
 
     # print(f"First 5 floats from ti: {ti[:5][0]}")
 
@@ -349,7 +354,7 @@ def call_spiking(tj, W, D_i, t_min_prev, t_min, t_max, robustness_params):
 
     # Ensure valid spiking time. Do not spike for ti >= t_max.
     # No spike is modelled as t_max that cancels out in the next layer (tj-t_min) as t_min there is t_max
-    ti = tf.where(ti < t_max, ti, t_max)
+    ti = tf.where(ti < t_max_new, ti, t_max_new)
     # Add noise to the spiking time for noise simulations
     ti = ti + tf.random.normal(tf.shape(ti), stddev=robustness_params['noise'], dtype=tf.dtypes.float64)
 
@@ -363,5 +368,5 @@ def call_spiking(tj, W, D_i, t_min_prev, t_min, t_max, robustness_params):
    # print(tf.__version__)
    
 
-    return ti
+    return ti, t_max_new
 
