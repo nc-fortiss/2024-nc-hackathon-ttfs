@@ -31,6 +31,7 @@ parser.add_argument('--w_min', type=float, default=-1.0, help='w_min to use if w
 parser.add_argument('--w_max', type=float, default=1.0, help='w_max to use if weight_bits is enabled')
 parser.add_argument('--latency_quantiles', type=float, default=0.0, help='Number of quantiles to take into account when calculating t_max. 0 -disabled')
 parser.add_argument('--mode', type=str, default='', help='Ignore: A hack to address a bug in argsparse during debugging')
+parser.add_argument('--retrain', type=strtobool, default=True, help='Retrain the SNN model with ReLU X_n')
 args = parser.parse_known_args(override)
 if(len(args[1])>0):
     print("Warning: Ignored args", args[1])
@@ -132,14 +133,19 @@ if args.testing:
     test_acc = model.evaluate(data.x_test, data.y_test, batch_size=args.batch_size)
     logging.info("Initial testing accuracy is {}.".format(test_acc))
 
-logging.info("#### Training ####")
-history=model.fit(
-    data.x_train, data.y_train,
-    batch_size=args.batch_size,
-    epochs=args.epochs,
-    verbose=1,
-    validation_data=(data.x_test, data.y_test)
+
+
+if (args.load and args.retrain and 'SNN' in args.model_type) or not args.load:
+    logging.info("#### Training ####")
+    # Retrain the SNN model with ReLU X_n / train model from scratch.
+    history=model.fit(
+        data.x_train, data.y_train,
+        batch_size=args.batch_size,
+        epochs=args.epochs,
+        verbose=1,
+        validation_data=(data.x_test, data.y_test)
     )
+
 
 if args.testing and args.epochs > 0:
     # Obtain accuracy of the fine-tuned SNN model.
@@ -256,17 +262,11 @@ if 'SNN' in args.model_type:
 
     y_lim_max = float(10000)
     print("Length of output_adjusted: ", len(output_adjusted))
-    for i in range(len(output_adjusted)):
+    for i in range(len(output_adjusted) - 1):
         print(output_adjusted[i].shape)
-        plt.hist(output_adjusted[i].flatten(), bins=20, alpha=0.5)
-        """
-         curr = output_adjusted[i].flatten()
-        sorted_curr = np.sort(curr)
-        y_lim_max = np.min(y_lim_max, sorted_curr[-2])
-        """
-       
+        plt.hist(output_adjusted[i].flatten(), bins=20, alpha=0.5, label=f'Layer {i+1}')  # Add label for each layer       
     
-    plt.xlim(0, np.max(output_adjusted[layer_num - 2]) + 100)
+    plt.xlim(0, np.max(output_adjusted[layer_num - 2]) + 0.1 * np.max(output_adjusted[layer_num - 2]))
     
     # crop y-axis to see the distribution better since there are some outliers (= no spikes)
     plt.ylim(0, 0.25 * 1e7)
@@ -279,11 +279,12 @@ if 'SNN' in args.model_type:
     plt.ylabel('Value Counts')
     plt.legend()
     plt.grid(True)
-    plt.savefig(plot_dir + title + '.png')
+    if args.retrain:
+        plt.savefig(plot_dir + title + '_retrained.png')
+    else:
+        plt.savefig(plot_dir + title + '.png')
     plt.show()
     
     
     
-
-
 print('### Total elapsed time [s]:', time.time() - start_time)
