@@ -326,8 +326,8 @@ def call_spiking(tj, W, D_i, t_min_prev, t_min, t_max, robustness_params):
     Assumes tau_c=1 and B_i^(n)=1
     """
     if robustness_params['time_bits'] != 0:
-        tj = t_min_prev+tf.quantization.fake_quant_with_min_max_args(tf.cast(tj-t_min_prev, dtype=tf.float32),
-            min=t_min_prev, max=t_min, num_bits=robustness_params['time_bits'])
+        tj = t_min_prev+tf.quantization.fake_quant_with_min_max_vars(tf.cast(tj-t_min_prev, dtype=tf.float32),
+            min=tf.cast(t_min_prev, dtype=tf.float32), max=tf.cast(t_min, dtype=tf.float32), num_bits=robustness_params['time_bits'])
         tj = tf.cast(tj, tf.float64)
     if robustness_params['weight_bits'] != 0:
         W = tf.quantization.fake_quant_with_min_max_args(tf.cast(W, dtype=tf.float32),
