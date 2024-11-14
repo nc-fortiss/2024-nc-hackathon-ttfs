@@ -6,14 +6,14 @@ import pickle as pkl
 from Dataset import Dataset
 from model import *
 import time
+import matplotlib.pyplot as plt
 start_time = time.time()
 tf.keras.backend.set_floatx('float64') #to avoid numerical differences when comparing training of ReLU vs SNN
 override = None
-import matplotlib.pyplot as plt
 
 strtobool = (lambda s: s=='True')
 parser = argparse.ArgumentParser(description='TTFS')
-parser.add_argument('--data_name', type=str, default='MNIST', help='(MNIST|CIFAR10|CIFAR100)')
+parser.add_argument('--data_name', type=str, default='MNIST', help='(GTSRB|MNIST|CIFAR10|CIFAR100)')
 parser.add_argument('--logging_dir', type=str, default='./logs/', help='Directory for logging')
 parser.add_argument('--model_type', type=str, default='SNN', help='(SNN|ReLU)')
 parser.add_argument('--model_name', type=str, default='FC2', help='Should contain (FC2|VGG[BN]): e.g. VGG_BN_test1')
@@ -37,13 +37,15 @@ if(len(args[1])>0):
 args = args[0]
 args.model_name = args.data_name + '-' + args.model_name
 set_up_logging(args.logging_dir, args.model_name)
+
+# CHECK QUANTAZATION
 robustness_params={
     'noise':args.noise,
-    'time_bits':args.time_bits,
-    'weight_bits': args.weight_bits,
+    'time_bits':args.time_bits, # TIMESTAMPS PER LAYER
+    'weight_bits': args.weight_bits, # 8 bits ?
     'w_min': args.w_min,
     'w_max': args.w_max,
-    'latency_quantiles':args.latency_quantiles
+    'latency_quantiles':args.latency_quantiles # use in call_spikes 
 }
 
 # Create data object
@@ -65,12 +67,18 @@ if 'FC2' in args.model_name:
         model = create_fc_model_ReLU(layers=2, optimizer=optimizer)
 if 'VGG' in args.model_name:
     # We consider one architecture, a 15-layer VGG-like network.
-    if 'MNIST' in args.data_name: #MNIST / FMNIST
-        layers2D=[64, 64,       128, 128, 'pool', 256, 256, 256, 'pool', 512, 512, 512, 'pool', 512, 512, 512, 'pool']
-        layers1D=[512, 512]
-    else:  #other: CIFAR10, CIFAR100
+    # if 'MNIST' in args.data_name: #MNIST / FMNIST
+    #     layers2D=[64, 64,       128, 128, 'pool', 256, 256, 256, 'pool', 512, 512, 512, 'pool', 512, 512, 512, 'pool']
+    #     layers1D=[512, 512]
+    if 'MNIST':
+        layers2D=[64, 128, 'pool', 256, 'pool', 512, 'pool', 512, 'pool']
+        layers1D=[512]
+    elif 'CIFAR10' or 'CIFAR100':
         layers2D = [64, 64, 'pool', 128, 128, 'pool', 256, 256, 256, 'pool', 512, 512, 512, 'pool', 512, 512, 512, 'pool']
         layers1D=[512]
+    elif 'GTSRB': 
+        layers2D = [64, 64, 128, 128, 'pool', 256, 256, 'pool', 512, 512, 'pool']
+        layers1D = [256]
     kernel_size=(3,3)
     regularizer = None
     initializer = 'glorot_uniform' # keras default
@@ -112,12 +120,8 @@ if 'SNN' in args.model_type:
     # Set parameters of SNN network: t_min_prev, t_min, t_max.
     t_min, t_max = 0, 1  # for the input layer
     for layer in model.layers:
-        print(f"************* Layer = {layer}")
         if 'conv' in layer.name or 'dense' in layer.name:
-            
-            t_min, t_max = layer.set_params(t_min, t_max) 
-
-
+            t_min, t_max = layer.set_params(t_min, t_max)
 
 if args.testing:
     logging.info("#### Initial test set accuracy testing ####")
@@ -159,24 +163,20 @@ if args.save and 'ReLU' in args.model_type:
     # 3. Find maximum layer outputs.
     logging.info('calculating maximum layer output...')
     layer_num, X_n = 0, []
-    layers_max, spike_times = [], []
+    layers_max = []
     for k, layer in enumerate(model.layers):
         if 'conv' in layer.name or 'dense' in layer.name:
             if k!=len(model.layers)-2:
                 # Calculate X_n of the current layer.
-                # layers_max.append(tf.reduce_max(tf.nn.relu(layer.output)))
-                spike_times.append(layer.output)
-                
-    
-    extractor = tf.keras.Model(inputs=model.inputs, outputs=spike_times)
+                layers_max.append(tf.reduce_max(tf.nn.relu(layer.output)))
+    extractor = tf.keras.Model(inputs=model.inputs, outputs=layers_max)
     output = extractor.predict(data.x_train, batch_size=64, verbose=1)
-    print(type(output[0]))
-    print(output[0].shape)
     X_n = list(map(lambda x: np.max(x), output))
     logging.info('X_n: %s', X_n)
     pkl.dump(X_n, open(args.logging_dir + '/' + args.model_name + '_X_n.pkl', 'wb'))
     logging.info('saved maximum layer output')
-
+    print("----------")
+    print(model.t_min_overall)
 
 if 'SNN' in args.model_type:
     spike_times = []
@@ -200,7 +200,7 @@ if 'SNN' in args.model_type:
     print("----------")
     print(model.t_min_overall)
 
-    plt.hist(output[0], bins=20, alpha=0.7)
+    plt.hist(output[1], bins=100, alpha=0.7)
     # plt.xlim(1490, 15)
     plt.title('Output Histogram')
     plt.xlabel('Time')
@@ -208,9 +208,5 @@ if 'SNN' in args.model_type:
     plt.legend()
     plt.grid(True)
     plt.show()
-
-
-
-
 
 print('### Total elapsed time [s]:', time.time() - start_time)
