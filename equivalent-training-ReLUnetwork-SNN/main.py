@@ -7,6 +7,7 @@ from Dataset import Dataset
 from model import *
 import time
 import matplotlib.pyplot as plt
+
 start_time = time.time()
 tf.keras.backend.set_floatx('float64') #to avoid numerical differences when comparing training of ReLU vs SNN
 override = None
@@ -62,7 +63,7 @@ model = None
 logging.info("#### Creating the model ####")
 if 'FC2' in args.model_name:
     if 'SNN' in args.model_type:
-        model = create_fc_model_SNN(layers=2, optimizer=optimizer, robustness_params=robustness_params)
+        model = create_fc_model_SNN(layers=5, optimizer=optimizer, robustness_params=robustness_params)
     if 'ReLU' in args.model_type:
         model = create_fc_model_ReLU(layers=2, optimizer=optimizer)
 if 'VGG' in args.model_name:
@@ -175,8 +176,8 @@ if args.save and 'ReLU' in args.model_type:
     logging.info('X_n: %s', X_n)
     pkl.dump(X_n, open(args.logging_dir + '/' + args.model_name + '_X_n.pkl', 'wb'))
     logging.info('saved maximum layer output')
-    print("----------")
-    print(model.t_min_overall)
+    # print("----------")
+    # print(model.t_min_overall)
 
 if 'SNN' in args.model_type:
     # Training
@@ -194,29 +195,32 @@ if 'SNN' in args.model_type:
 
     spike_times = []
     output_spikes = []
+    model = tf.keras.Model(inputs=model.inputs, outputs=model.outputs[0])
     for layer in model.layers:
         if isinstance(layer, (SpikingDense, SpikingConv2D)):
             # layer.use_modified_calculation = False
             layer.compute_output_spiking_times = True
             if not layer.outputLayer:
                 spike_times.append(layer.output)
-                
+    model.compile(metrics=["categorical_accuracy"], loss=tf.keras.losses.CategoricalCrossentropy(from_logits=True),
+                  optimizer=optimizer)
+               
     extractor_spks = tf.keras.Model(inputs=model.inputs, outputs=spike_times)
     output_intermediate_spikes = extractor_spks.predict(data.x_train, batch_size=64, verbose=1) # 60000, 340
-    
-    print("extracted spike time intermediate layer output shape: ", len(output_intermediate_spikes[0]), len(output_intermediate_spikes[1]))
-    # Compute latency statistics
-    mean_latency_before_dense1 = np.mean(output_intermediate_spikes)
     
     logging.info("#### Test set accuracy testing before update####")
     test_acc = model.evaluate(data.x_test, data.y_test, batch_size=args.batch_size)
     logging.info("Testing accuracy without update is {}.".format(test_acc))
     
     print("Latency before updating parameters:")
-    print(f"Mean latency: {mean_latency_before_dense1:.4f}")
 
+    plt.figure(figsize=(10,6))
     # Plot latency distribution
-    plt.hist(output_intermediate_spikes.flatten(), bins=100)
+    if output_intermediate_spikes is None:
+        print("there is nothing to plottttt")
+    for i in range(len(output_intermediate_spikes)):
+        # Plot the combined histogram
+        plt.hist(output_intermediate_spikes[i].flatten(), bins=100)
     plt.title('Output Spiking Times Before Parameter Update')
     plt.xlabel('Spiking Time')
     plt.ylabel('Frequency')
@@ -225,24 +229,33 @@ if 'SNN' in args.model_type:
 
 
     spike_times = []
+    model = tf.keras.Model(inputs=model.inputs, outputs=model.outputs[0])
     # Update parameters
     logging.info("#### Updating parameters for evaluation ####")
     for layer in model.layers:
         if isinstance(layer, (SpikingDense, SpikingConv2D)):
             # layer.use_modified_calculation = True
-            layer.compute_output_spiking_times = True
+            # layer.compute_output_spiking_times = True
             if not layer.outputLayer:
                 spike_times.append(layer.output)
-
+    model.compile(metrics=["categorical_accuracy"], loss=tf.keras.losses.CategoricalCrossentropy(from_logits=True),
+                  optimizer=optimizer)
+    
     extractor_spks = tf.keras.Model(inputs=model.inputs, outputs=spike_times)
     output_intermediate_spikes = extractor_spks.predict(data.x_train, batch_size=64, verbose=1)
-    
+    shift = 0
+    t_max_new = 1
+    print("Model Layer information: ", len(model.layers))
     for i, layer in enumerate(model.layers):
         if isinstance(layer, (SpikingDense, SpikingConv2D)):
-            if i < len(model.layers) - 2:
+            if i < len(model.layers) - 1:
+                i -= 1
+                layer.t_min.assign(t_max_new)
+                print(layer.name, layer.t_min)
                 # time_duration = layer.t_max - layer.t_min  # - layer.D_i
-                shift = tf.reduce_min(output_intermediate_spikes.flatten()) - layer.t_min
-                print("earliest spike time: ", tf.reduce_min(output_intermediate_spikes.flatten()))
+                print("INFOO!", i, len(output_intermediate_spikes[i]), type(output_intermediate_spikes[i]))
+                shift = (tf.reduce_min(output_intermediate_spikes[i].flatten()) - layer.t_min)
+                print("earliest spike time: ", tf.reduce_min(output_intermediate_spikes[i].flatten()))
                 print("Shift: ", shift)
                 print("current t_min of the layer: ", layer.name, layer.t_min)
                 # shift = time_duration - min_spike_time
@@ -252,78 +265,76 @@ if 'SNN' in args.model_type:
                 print(type(model.layers[i]), len(model.layers))
                 print("T_max new, and layer t_max new", t_max_new, layer.t_max)
                 model.layers[i+1].t_min.assign(t_max_new)
-            print("next layer's t_min value, should be updated: ", layer.name, layer.t_min)
-  
-    print("extracted spike time intermediate layer output shape: ", len(output_intermediate_spikes))
-    
+                print("next layer's t_min value, should be updated: ", layer.name, layer.t_min)
+                print("next layer's t_max value, should be updated: ", layer.name, layer.t_max)
+                
     spike_times = []
+    model = tf.keras.Model(inputs=model.inputs, outputs=model.outputs[0])
     for layer in model.layers:
         if isinstance(layer, (SpikingDense, SpikingConv2D)):
             # layer.use_modified_calculation = True
-            layer.compute_output_spiking_times = True
+            # layer.compute_output_spiking_times = True
             if not layer.outputLayer:
                 spike_times.append(layer.output)
-
+    model.compile(metrics=["categorical_accuracy"], loss=tf.keras.losses.CategoricalCrossentropy(from_logits=True),
+                  optimizer=optimizer)
+    
     extractor_spks = tf.keras.Model(inputs=model.inputs, outputs=spike_times)
     output_intermediate_spikes = extractor_spks.predict(data.x_train, batch_size=64, verbose=1)
-    print("earliest sike after shifting: ", tf.reduce_min(output_intermediate_spikes.flatten()))
-    # Compute latency statistics
-    mean_latency_after_dense1 = np.mean(output_intermediate_spikes)
-    
+    for i in range(len(output_intermediate_spikes)):
+        print("earliest spike after shifting: ", tf.reduce_min(output_intermediate_spikes[i].flatten()))
+        
     logging.info("#### Test set accuracy testing after update####")
     test_acc = model.evaluate(data.x_test, data.y_test, batch_size=args.batch_size)
     logging.info("Testing accuracy with update is {}.".format(test_acc))
 
+    plt.figure(figsize=(10,6))
     # Plot latency distribution
     if output_intermediate_spikes is None:
         print("nothing to plottttttt")
-    plt.hist(output_intermediate_spikes.flatten(), bins=100, color='orange')
+    for i in range(len(output_intermediate_spikes)):
+        plt.hist(output_intermediate_spikes[i].flatten(), bins=100)
     plt.title('Output Spiking Times After Parameter Update')
     plt.xlabel('Spiking Time')
     plt.ylabel('Frequency')
     plt.grid(True)
     plt.show()
-    
-
-    # Compare latencies
-    print("\nLatency Comparison:")
-    print(f"Before updating parameters: Mean = {mean_latency_before_dense1:.4f}")
-    print(f"After updating parameters: Mean = {mean_latency_after_dense1:.4f}")
 
 
-# if 'SNN' in args.model_type:
-#     spike_times = []
-#     for k, layer in enumerate(model.layers):
-#         if 'conv' in layer.name or 'dense' in layer.name:
-#             # if k!=len(model.layers)-2:
-#                 # Calculate X_n of the current layer.
-#                 # layers_max.append(tf.reduce_max(tf.nn.relu(layer.output)))
-#                 spike_times.append(layer.output)
+
+# # if 'SNN' in args.model_type:
+# #     spike_times = []
+# #     for k, layer in enumerate(model.layers):
+# #         if 'conv' in layer.name or 'dense' in layer.name:
+# #             # if k!=len(model.layers)-2:
+# #                 # Calculate X_n of the current layer.
+# #                 # layers_max.append(tf.reduce_max(tf.nn.relu(layer.output)))
+# #                 spike_times.append(layer.output)
                 
-#     extractor = tf.keras.Model(inputs=model.inputs, outputs=spike_times)
-#     output = extractor.predict(data.x_train, batch_size=64, verbose=1)
-#     print(type(output[0]))
-#     print(len(output))
-#     print(output[0].shape)
-#     print(output[1].shape)
-#     # print(output[2].shape)
-#     # print(output[0][0])
-#     X_n = list(map(lambda x: np.max(x), output))
+# #     extractor = tf.keras.Model(inputs=model.inputs, outputs=spike_times)
+# #     output = extractor.predict(data.x_train, batch_size=64, verbose=1)
+# #     print(type(output[0]))
+# #     print(len(output))
+# #     print(output[0].shape)
+# #     print(output[1].shape)
+# #     # print(output[2].shape)
+# #     # print(output[0][0])
+# #     X_n = list(map(lambda x: np.max(x), output))
 
-#     print("----------")
-#     print(model.t_min_overall)
+# #     print("----------")
+# #     print(model.t_min_overall)
 
-#     plt.hist(output[0].flatten(), bins=100, alpha=0.7)
-#     # plt.xlim(1490, 15)
-#     plt.title('Output Histogram')
-#     plt.xlabel('Time')
-#     plt.ylabel('Value Counts')
-#     plt.legend()
-#     plt.grid(True)
-#     plt.show()
-
-
+# #     plt.hist(output[0].flatten(), bins=100, alpha=0.7)
+# #     # plt.xlim(1490, 15)
+# #     plt.title('Output Histogram')
+# #     plt.xlabel('Time')
+# #     plt.ylabel('Value Counts')
+# #     plt.legend()
+# #     plt.grid(True)
+# #     plt.show()
 
 
 
-print('### Total elapsed time [s]:', time.time() - start_time)
+
+
+# print('### Total elapsed time [s]:', time.time() - start_time)

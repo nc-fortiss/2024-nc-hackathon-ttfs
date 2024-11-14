@@ -162,7 +162,7 @@ class ModelTmax(tf.keras.Model):
         for layer in self.layers:
             if 'conv' in layer.name or 'dense' in layer.name: 
                 try:
-                    t_max= t_min + tf.maximum(tf.cast(layer.t_max-layer.t_min, dtype=tf.float64), 10.0*(layer.t_max-tf.reduce_min(y_pred_all[1][k])))
+                    t_max= t_min + tf.maximum(tf.cast(layer.t_max-layer.t_min, dtype=tf.float64), 1.0*(layer.t_max-tf.reduce_min(y_pred_all[1][k])))
                     # t_max = tf.cast(layer.t_max-layer.t_min, dtype=tf.float64)
                 except IndexError:
                     t_max=0
@@ -312,7 +312,7 @@ def create_fc_model_ReLU(layers = 2, optimizer='adam', N_hid=340, N_in=784, N_ou
     return model
 
 
-def create_fc_model_SNN(layers, optimizer, X_n=1000, robustness_params={}, N_hid=340, N_in=784, N_out=10):
+def create_fc_model_SNN(layers, optimizer, X_n=1, robustness_params={}, N_hid=340, N_in=784, N_out=10):
     """
     Create 2-layer fully connected network. Tested on MNIST dataset.
     """
@@ -350,7 +350,7 @@ def call_spiking(tj, W, D_i, t_min_prev, t_min, t_max, robustness_params, use_mo
     ti = (tf.matmul(tj - t_min, W) + threshold + t_min)
     # Ensure valid spiking time. Do not spike for ti >= t_max.
     ti = tf.where(ti < t_max, ti, t_max)
-    ti = tf.where(ti > t_min, ti, t_min)
+    # ti = tf.where(ti > t_min, ti, t_min)
 
     # if not use_modified_calculation:
     #     # Original calculation
