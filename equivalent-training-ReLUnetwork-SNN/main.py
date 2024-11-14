@@ -45,6 +45,9 @@ robustness_params={
     'w_max': args.w_max,
     'latency_quantiles':args.latency_quantiles
 }
+plot_dir = os.curdir + '/plots/'
+if not os.path.exists(plot_dir):
+    os.makedirs(plot_dir)
 
 # Create data object
 data = Dataset(
@@ -270,12 +273,15 @@ if 'SNN' in args.model_type:
     
 
     # plt.xlim(1490, 15)
-    plt.title('Output Histogram')
+    title = 'Spiking time histogram with X_n from ReLU'
+    plt.title(title)
     plt.xlabel('Time')
     plt.ylabel('Value Counts')
     plt.legend()
     plt.grid(True)
+    plt.savefig(plot_dir + title + '.png')
     plt.show()
+    
     
     
 
