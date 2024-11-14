@@ -211,10 +211,12 @@ if 'SNN' in args.model_type:
     """
     
     adjusted_spike_times = []
+    t_max_values = []
     for k, layer in enumerate(model.layers):
         if 'conv' in layer.name or 'dense' in layer.name:
             spike_times.append(layer.output)
             adjusted_spike_times.append(layer.output)
+            t_max_values.append(layer.t_max)
         
                 
     extractor = tf.keras.Model(inputs=model.inputs, outputs=spike_times)
@@ -223,8 +225,8 @@ if 'SNN' in args.model_type:
     # for adjusted spike timings 
     extractor_adjusted = tf.keras.Model(inputs=model.inputs, outputs=adjusted_spike_times)
     output_adjusted = extractor_adjusted.predict(data.x_train, batch_size=64, verbose=1)
-    
-    
+
+
     print(type(output[0]))
     print(len(output))
     print(output[0].shape)
@@ -255,7 +257,17 @@ if 'SNN' in args.model_type:
     print("Length of output_adjusted: ", len(output_adjusted))
     for i in range(len(output_adjusted)):
         print(output_adjusted[i].shape)
-        plt.hist(output_adjusted[i].flatten(), bins=20, alpha=0.5)
+
+        t_max_layer = t_max_values[i].numpy()       # get the t_max for i_th layer
+        print("t_max_layer = ", t_max_layer)
+        
+        # Flatten the matrix (samples, neurons) into a 1D array
+        output_flat = output_adjusted[i].flatten()  
+
+        # Filter out all the values higher than t_max
+        output_filter = output_flat[output_flat < t_max_layer] 
+
+        plt.hist(output_filter, bins=20, alpha=0.5)
         """
          curr = output_adjusted[i].flatten()
         sorted_curr = np.sort(curr)
@@ -266,11 +278,11 @@ if 'SNN' in args.model_type:
     plt.xlim(0, np.max(output_adjusted[layer_num - 2]) + 100)
     
     # crop y-axis to see the distribution better since there are some outliers (= no spikes)
-    plt.ylim(0, 0.25 * 1e7)
+    # plt.ylim(0, 0.25 * 1e7)
     
 
     # plt.xlim(1490, 15)
-    plt.title('Output Histogram')
+    plt.title('Output Histogram - removing points greater/equal to t_max per layer')
     plt.xlabel('Time')
     plt.ylabel('Value Counts')
     plt.legend()
