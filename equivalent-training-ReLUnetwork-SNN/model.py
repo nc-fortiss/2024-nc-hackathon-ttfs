@@ -3,8 +3,8 @@ import tensorflow as tf
 from tensorflow.keras.layers import Conv2D, Input, Dense, MaxPool2D, Flatten, Dropout, BatchNormalization
 from tensorflow.keras.models import Model
 from utils import *
-import matplotlib.pyplot as plt
 tf.keras.backend.set_floatx('float64')
+
 
 
 class SpikingDense(tf.keras.layers.Layer):
@@ -19,8 +19,8 @@ class SpikingDense(tf.keras.layers.Layer):
         self.input_dim=input_dim
         self.regularizer = kernel_regularizer
         self.initializer = kernel_initializer
+
         super(SpikingDense, self).__init__(name=name)
-        self.plots = []
     
     def build(self, input_dim):
         # In case this is the first dense layer after Flatten layer.
@@ -43,9 +43,7 @@ class SpikingDense(tf.keras.layers.Layer):
         Input spiking times tj, output spiking times ti or the value of membrane potential in case of output layer. 
         """
         output = call_spiking(tj, self.kernel, self.D_i, self.t_min_prev, self.t_min, self.t_max, self.robustness_params)
-        fig, ax = plot_distribution(output, title='Distribution of spiking times', xlabel='Spiking time', ylabel='Frequency', t_min=self.t_min, t_max=self.t_max)
-        self.plots.append((fig, ax))        
-        #In case of the output layer a simple integration is applied without spiking. 
+        # In case of the output layer a simple integration is applied without spiking. 
         if self.outputLayer:
             # Read out the value of membrane potential at time t_min.
             W_mult_x = tf.matmul(self.t_min-tj, self.kernel)
@@ -67,8 +65,6 @@ class SpikingConv2D(tf.keras.layers.Layer):
         self.robustness_params=robustness_params #['time_bits']
         self.alpha = tf.cast(tf.fill((filters, ), 1), dtype=tf.float64)
         super(SpikingConv2D, self).__init__(name=name)
-        self.plots = []
-
     
     def build(self, input_dim):
         self.kernel = self.add_weight(shape=(self.kernel_size[0], self.kernel_size[1], input_dim[-1], self.filters),
@@ -106,8 +102,6 @@ class SpikingConv2D(tf.keras.layers.Layer):
             # In this case the threshold is the same for whole input image.
             tj = tf.reshape(tj, (-1, tf.shape(W)[0]))
             ti = call_spiking(tj, W, self.D_i[0], self.t_min_prev, self.t_min, self.t_max, self.robustness_params)
-            fig, ax = plot_distribution(ti, title='Distribution of spiking times', xlabel='Spiking time', ylabel='Frequency', t_min=self.t_min, t_max=self.t_max)
-            self.plots.append((fig, ax))
             # Layer output is reshaped back.
             if self.padding=='valid':
                 ti = tf.reshape(ti, (-1, image_valid_size, image_valid_size, self.filters))
@@ -121,8 +115,6 @@ class SpikingConv2D(tf.keras.layers.Layer):
                 # Iterate over 9 different partitions and call call_spiking with different threshold value.
                 tj_part = tf.reshape(tj_part, (-1, tf.shape(W)[0]))
                 ti_part = call_spiking(tj_part, W, self.D_i[i], self.t_min_prev, self.t_min, self.t_max, self.robustness_params)
-                fig, ax = plot_distribution(ti_part, title='Distribution of spiking times', xlabel='Spiking time', ylabel='Frequency', t_min=self.t_min, t_max=self.t_max)
-                self.plots.append((fig, ax))
                 # Partitions are reshaped back.
                 if i==0: ti_part=tf.reshape(ti_part, (-1, image_valid_size, image_valid_size, self.filters))
                 if i in [1, 3, 5, 7]: ti_part=tf.reshape(ti_part, (-1, 1, 1, self.filters))
@@ -145,6 +137,8 @@ class SpikingConv2D(tf.keras.layers.Layer):
 class ModelTmax(tf.keras.Model):
     def __init__(self, **kwargs):
         super(ModelTmax, self).__init__(**kwargs)
+        self.t_min_overall = float('inf')
+        
 
     def train_step(self, data):
         x, y_all = data
@@ -155,6 +149,7 @@ class ModelTmax(tf.keras.Model):
         gradients = tape.gradient(loss, trainable_vars)
         self.optimizer.apply_gradients(zip(gradients, trainable_vars))
         t_min_prev, t_min, k=0.0, 1.0, 0
+    
         for layer in self.layers:
             if 'conv' in layer.name or 'dense' in layer.name: 
                 try:
@@ -167,6 +162,14 @@ class ModelTmax(tf.keras.Model):
                 t_min_prev, t_min = t_min, t_max
                 if k==len(y_pred_all[1]): break
                 k+=1
+
+                # print(type(t_min))
+                #print(type(self.t_min_overall))
+                #print(type(layer.t_min))
+                #print(type(tf.cast(layer.t_min, dtype=tf.float64)))
+                #print(type(float(layer.t_min.numpy())))
+                #self.t_min_overall = min(self.t_min_overall,tf.cast(layer.t_min, dtype=tf.float64))
+
         self.compiled_metrics.update_state(y_all, y_pred_all[0])
         return {m.name: m.result() for m in self.metrics}
     
@@ -240,6 +243,10 @@ def create_vgg_model_SNN(layers2D, kernel_size, layers1D, data, optimizer, X_n=1
                        kernel_regularizer=kernel_regularizer, kernel_initializer=kernel_initializer,
                        padding='same', kernel_size=kernel_size,
                        robustness_params=robustness_params)(tj)
+
+    # Change here
+    #tf.print("After conv2d_1, ti for batch 3: :", ti[3])
+
     min_ti.append(tf.reduce_min(ti))
     j, image_size =1, data.input_shape[0]
     for f in layers2D[1:]:
@@ -257,6 +264,10 @@ def create_vgg_model_SNN(layers2D, kernel_size, layers1D, data, optimizer, X_n=1
                      kernel_regularizer=kernel_regularizer, kernel_initializer=kernel_initializer,
                      robustness_params=robustness_params, input_dim=(image_size**2)*layers2D[-2])(ti)
     min_ti.append(tf.reduce_min(ti))
+
+    # CHange here
+    #tf.print("After dense_1, ti for batch:", ti[3])
+
     j, k=j+1, 0
     for k, d in enumerate(layers1D[1:]):
         i_dense +=1
@@ -327,36 +338,29 @@ def call_spiking(tj, W, D_i, t_min_prev, t_min, t_max, robustness_params):
     threshold = t_max - t_min - D_i
     # Calculate output spiking time ti (Eq. 7)
     ti = (tf.matmul(tj-t_min, W) + threshold + t_min)
+
+    # print(f"First 5 floats from ti: {ti[:5][0]}")
+
+    # print(f"################### - {ti[:5]} - #######################")
+    # output_tensor = model(input_data)
+    # first_five_entries = output_tensor[:5]
+
+
+
     # Ensure valid spiking time. Do not spike for ti >= t_max.
     # No spike is modelled as t_max that cancels out in the next layer (tj-t_min) as t_min there is t_max
-    ti = tf.where(ti < t_max, ti, t_max) # ti < t_max * latency_quantile...
+    ti = tf.where(ti < t_max, ti, t_max)
     # Add noise to the spiking time for noise simulations
     ti = ti + tf.random.normal(tf.shape(ti), stddev=robustness_params['noise'], dtype=tf.dtypes.float64)
+
+    # print("######################################################################################")
+    # print(ti.shape)
+    # print(ti)
+
+    # tf.print("First 5 floats from ti:", ti[0].shape)
+
+
+   # print(tf.__version__)
+   
+
     return ti
-
-
-def plot_distribution(ti, title='Distribution of spiking times', xlabel='Spiking time', ylabel='Frequency', t_min=None, t_max=None):
-    """
-    Plot the distribution of spiking times and return the figure.
-    """
-    # Create a figure and axis for plotting
-    fig, ax = plt.subplots()
-    
-    # Plot the spiking time data
-    ax.plot(ti) 
-    
-    # Set the x-axis range if specified
-    if t_min is not None and t_max is not None:
-        ax.set_xlim(t_min, t_max)
-    
-    # Set labels and title
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel(ylabel)
-    ax.set_title(title)
-    
-    return fig, ax
-
-
-
-
-

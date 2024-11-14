@@ -12,13 +12,13 @@ override = None
 
 strtobool = (lambda s: s=='True')
 parser = argparse.ArgumentParser(description='TTFS')
-parser.add_argument('--data_name', type=str, default='MNIST', help='(GTSRB|MNIST|CIFAR10|CIFAR100)')
+parser.add_argument('--data_name', type=str, default='GTSRB', help='(GTSRB|MNIST|CIFAR10|CIFAR100)')
 parser.add_argument('--logging_dir', type=str, default='./logs/', help='Directory for logging')
 parser.add_argument('--model_type', type=str, default='SNN', help='(SNN|ReLU)')
-parser.add_argument('--model_name', type=str, default='FC2', help='Should contain (FC2|VGG[BN]): e.g. VGG_BN_test1')
+parser.add_argument('--model_name', type=str, default='FC', help='Should contain (FC|VGG[BN]): e.g. VGG_BN_test1')
 parser.add_argument('--lr', type=float, default=0.0005, help='Learning rate')
 parser.add_argument('--batch_size', type=int, default=8, help='Batch size')
-parser.add_argument('--epochs', type=int, default=10, help='Epochs. 0 -skip training')
+parser.add_argument('--epochs', type=int, default=20, help='Epochs. 0 -skip training')
 parser.add_argument('--testing', type=strtobool, default=True, help='Execute testing.')
 parser.add_argument('--load', type=str, default='False', help='Load before training. (True|False|custom_name.h5)')
 parser.add_argument('--save', type=strtobool, default=False, help='Store after training.')
@@ -59,9 +59,12 @@ data = Dataset(
 optimizer = get_optimizer(args.lr)
 model = None
 logging.info("#### Creating the model ####")
-if 'FC2' in args.model_name:
+if 'FC' in args.model_name:
     if 'SNN' in args.model_type:
-        model = create_fc_model_SNN(layers=2, optimizer=optimizer, robustness_params=robustness_params)
+        if 'GTSRB' in args.data_name:
+            model = create_fc_model_SNN(layers = 2, optimizer=optimizer, X_n=1000, robustness_params=robustness_params, N_hid=340, N_in=32*32*3, N_out=43)
+        else:
+            model = create_fc_model_SNN(layers = 2, optimizer=optimizer, robustness_params=robustness_params)
     if 'ReLU' in args.model_type:
         model = create_fc_model_ReLU(layers=2, optimizer=optimizer)
 if 'VGG' in args.model_name:
@@ -73,8 +76,8 @@ if 'VGG' in args.model_name:
         layers2D = [64, 64, 'pool', 128, 128, 'pool', 256, 256, 256, 'pool', 512, 512, 512, 'pool', 512, 512, 512, 'pool']
         layers1D=[512]
     elif 'GTSRB': 
-        layers2D = [64, 64, 128, 128, 'pool', 256, 256, 'pool', 512, 512, 'pool']
-        layers1D = [256]
+        layers2D = [64, 'pool', 128, 'pool', 256, 'pool', 512, 'pool', 512, 'pool']
+        layers1D=[512]
     kernel_size=(3,3)
     regularizer = None
     initializer = 'glorot_uniform' # keras default

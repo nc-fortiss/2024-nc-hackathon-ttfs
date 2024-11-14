@@ -152,6 +152,9 @@ class Dataset:
             # Normalize to [-3, 3] range ??
             self.x_train = (self.x_train - self.mean_test) / (self.std_test + 1e-7)
             self.x_test = (self.x_test - self.mean_test) / (self.std_test + 1e-7)
+
+            if self.flatten:
+                self.x_train, self.x_test = self.x_train.reshape((len(self.x_train), -1)), self.x_test.reshape((len(self.x_test), -1))
     
         self.x_train, self.x_test = self.x_train.astype('float64'), self.x_test.astype('float64')
         self.y_test = tf.keras.utils.to_categorical(self.y_test, self.num_of_classes) 
