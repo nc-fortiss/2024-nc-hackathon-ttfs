@@ -9,16 +9,19 @@ tf.keras.backend.set_floatx('float64')
 
 class SpikingDense(tf.keras.layers.Layer):
     def __init__(self, units, name, X_n=1, outputLayer=False, robustness_params={}, input_dim=None,
-                 kernel_regularizer=None, kernel_initializer=None):
+                 kernel_regularizer=None, kernel_initializer=None, compute_output_spiking_times=False):
         self.units = units
         self.B_n = (1 + 0.5) * X_n
         self.outputLayer=outputLayer
+        self.compute_output_spiking_times = compute_output_spiking_times
         self.t_min_prev, self.t_min, self.t_max=0, 0, 1
         self.robustness_params=robustness_params
         self.alpha = tf.cast(tf.fill((units, ), 1), dtype=tf.float64) 
         self.input_dim=input_dim
         self.regularizer = kernel_regularizer
         self.initializer = kernel_initializer
+        self.use_modified_calculation = False 
+        self.spks = []
 
         super(SpikingDense, self).__init__(name=name)
     
@@ -42,14 +45,19 @@ class SpikingDense(tf.keras.layers.Layer):
         """
         Input spiking times tj, output spiking times ti or the value of membrane potential in case of output layer. 
         """
-        output = call_spiking(tj, self.kernel, self.D_i, self.t_min_prev, self.t_min, self.t_max, self.robustness_params)
-    
-        # In case of the output layer a simple integration is applied without spiking. 
         if self.outputLayer:
-            # Read out the value of membrane potential at time t_min.
-            W_mult_x = tf.matmul(self.t_min-tj, self.kernel)
-            self.alpha = self.D_i/(self.t_min-self.t_min_prev)
+            # Compute membrane potential at time t_min
+            W_mult_x = tf.matmul(self.t_min - tj, self.kernel)
+            self.alpha = self.D_i / (self.t_min - self.t_min_prev)
             output = self.alpha * (self.t_min - self.t_min_prev) + W_mult_x
+            if self.compute_output_spiking_times:
+                spks = call_spiking(tj, self.kernel, self.D_i, self.t_min_prev, self.t_min, self.t_max,
+                                  self.robustness_params, use_modified_calculation=self.use_modified_calculation)
+                self.spks = spks
+        else:
+            # Compute spiking times
+            output = call_spiking(tj, self.kernel, self.D_i, self.t_min_prev, self.t_min, self.t_max,
+                                  self.robustness_params, use_modified_calculation=self.use_modified_calculation)
         return output
     
     
@@ -316,13 +324,13 @@ def create_fc_model_SNN(layers, optimizer, X_n=1000, robustness_params={}, N_hid
     for i in range(layers-2):
         ti = SpikingDense(N(i+2), 'dense_' + str(i+2), (X_n[1+i] if type(X_n)==list else X_n), robustness_params=robustness_params)(ti)
         min_ti.append(tf.reduce_min(ti))
-    outputs = SpikingDense(N_out, 'dense_output', outputLayer=True, robustness_params=robustness_params)(ti)
+    outputs = SpikingDense(N_out, 'dense_output', outputLayer=True, robustness_params=robustness_params, compute_output_spiking_times=False)(ti)
     model = ModelTmax (inputs=tj, outputs=[outputs, min_ti])
     model.compile(metrics=['accuracy'], loss=tf.keras.losses.CategoricalCrossentropy(from_logits=True), optimizer=optimizer)
     return model
 
 
-def call_spiking(tj, W, D_i, t_min_prev, t_min, t_max, robustness_params):
+def call_spiking(tj, W, D_i, t_min_prev, t_min, t_max, robustness_params, use_modified_calculation=False):
     """
     Calculates spiking times from which ReLU functionality can be recovered.
     Assumes tau_c=1 and B_i^(n)=1
@@ -336,37 +344,34 @@ def call_spiking(tj, W, D_i, t_min_prev, t_min, t_max, robustness_params):
             min=robustness_params['w_min'], max=robustness_params['w_max'], num_bits=robustness_params['weight_bits'])
         W = tf.cast(W, tf.float64)
 
-    # Calculate the spiking threshold (Eq. 18)
-    threshold_old = t_max - t_min - D_i
-    threshold_shifted = tf.reduce_max(tf.abs(tf.matmul(tj - t_min, W)))
-    shift = threshold_old - threshold_shifted
+     # Calculate the spiking threshold (Eq. 18)
+    threshold = t_max - t_min - D_i
     # Calculate output spiking time ti (Eq. 7)
-    ti = (tf.matmul(tj-t_min, W) + threshold_shifted + t_min)
-    t_max_new = t_max - shift
-
-    # print(f"First 5 floats from ti: {ti[:5][0]}")
-
-    # print(f"################### - {ti[:5]} - #######################")
-    # output_tensor = model(input_data)
-    # first_five_entries = output_tensor[:5]
-
-
-
+    ti = (tf.matmul(tj - t_min, W) + threshold + t_min)
     # Ensure valid spiking time. Do not spike for ti >= t_max.
-    # No spike is modelled as t_max that cancels out in the next layer (tj-t_min) as t_min there is t_max
-    ti = tf.where(ti < t_max_new, ti, t_max_new)
-    # Add noise to the spiking time for noise simulations
+    ti = tf.where(ti < t_max, ti, t_max)
+
+    # if not use_modified_calculation:
+    #     # Original calculation
+    #     # Calculate the spiking threshold (Eq. 18)
+    #     threshold = t_max - t_min - D_i
+    #     # Calculate output spiking time ti (Eq. 7)
+    #     ti = (tf.matmul(tj - t_min, W) + threshold + t_min)
+    #     # Ensure valid spiking time. Do not spike for ti >= t_max.
+    #     ti = tf.where(ti < t_max, ti, t_max)
+    # else:
+    #     print("Entered modified calculation of spike times.")
+    #     # Modified calculation
+    #     # Calculate the spiking threshold (Eq. 18)
+    #     threshold_old = t_max - t_min - D_i
+    #     threshold_shifted = tf.reduce_max(tf.abs(tf.matmul(tj - t_min, W)))
+    #     shift = threshold_old - threshold_shifted
+    #     # Calculate output spiking time ti (Eq. 7)
+    #     ti = (tf.matmul(tj - t_min, W) + threshold_shifted + t_min)
+    #     t_max_new = t_max - shift
+    #     # Ensure valid spiking time. Do not spike for ti >= t_max_new.
+    #     ti = tf.where(ti < t_max_new, ti, t_max_new)
+    # # Add noise to the spiking time for noise simulations
     ti = ti + tf.random.normal(tf.shape(ti), stddev=robustness_params['noise'], dtype=tf.dtypes.float64)
-
-    # print("######################################################################################")
-    # print(ti.shape)
-    # print(ti)
-
-    # tf.print("First 5 floats from ti:", ti[0].shape)
-
-
-   # print(tf.__version__)
-   
-
-    return ti, t_max_new
+    return ti
 

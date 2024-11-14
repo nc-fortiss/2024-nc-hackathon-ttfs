@@ -119,25 +119,25 @@ if 'SNN' in args.model_type:
 
 
 
-if args.testing:
-    logging.info("#### Initial test set accuracy testing ####")
-    test_acc = model.evaluate(data.x_test, data.y_test, batch_size=args.batch_size)
-    logging.info("Initial testing accuracy is {}.".format(test_acc))
+# if args.testing:
+#     logging.info("#### Initial test set accuracy testing ####")
+#     test_acc = model.evaluate(data.x_test, data.y_test, batch_size=args.batch_size)
+#     logging.info("Initial testing accuracy is {}.".format(test_acc))
 
-logging.info("#### Training ####")
-history=model.fit(
-    data.x_train, data.y_train,
-    batch_size=args.batch_size,
-    epochs=args.epochs,
-    verbose=1,
-    validation_data=(data.x_test, data.y_test)
-    )
+# logging.info("#### Training ####")
+# history=model.fit(
+#     data.x_train, data.y_train,
+#     batch_size=args.batch_size,
+#     epochs=args.epochs,
+#     verbose=1,
+#     validation_data=(data.x_test, data.y_test)
+#     )
 
-if args.testing and args.epochs > 0:
-    # Obtain accuracy of the fine-tuned SNN model.
-    logging.info("#### Final test set accuracy testing ####")
-    test_acc = model.evaluate(data.x_test, data.y_test, batch_size=args.batch_size)
-    logging.info("Final testing accuracy is {}.".format(test_acc))
+# if args.testing and args.epochs > 0:
+#     # Obtain accuracy of the fine-tuned SNN model.
+#     logging.info("#### Final test set accuracy testing ####")
+#     test_acc = model.evaluate(data.x_test, data.y_test, batch_size=args.batch_size)
+#     logging.info("Final testing accuracy is {}.".format(test_acc))
 
 if args.save and 'ReLU' in args.model_type:
     logging.info("#### Saving ReLU model ####")
@@ -177,37 +177,142 @@ if args.save and 'ReLU' in args.model_type:
     pkl.dump(X_n, open(args.logging_dir + '/' + args.model_name + '_X_n.pkl', 'wb'))
     logging.info('saved maximum layer output')
 
+# # Update parameters after training and evaluate
+# if 'SNN' in args.model_type:
+#     logging.info("#### Updating parameters for evaluation ####")
+#     for layer in model.layers:
+#         if isinstance(layer, (SpikingDense, SpikingConv2D)):
+#             layer.use_modified_calculation = True
+
+#     # Evaluate the model with updated parameters
+#     logging.info("#### Evaluating model with updated parameters ####")
+#     test_acc = model.evaluate(data.x_test, data.y_test, batch_size=args.batch_size)
+#     logging.info("Test accuracy after updating parameters is {}.".format(test_acc))
 
 if 'SNN' in args.model_type:
+    # Training
+    logging.info("#### Training ####")
+    history = model.fit(
+        data.x_train, data.y_train,
+        batch_size=args.batch_size,
+        epochs=args.epochs,
+        verbose=1,
+        validation_data=(data.x_test, data.y_test)
+    )
+
+    # Measure latency before updating parameters
+    logging.info("#### Measuring latency before updating parameters ####")
+
     spike_times = []
-    for k, layer in enumerate(model.layers):
-        if 'conv' in layer.name or 'dense' in layer.name:
-            # if k!=len(model.layers)-2:
-                # Calculate X_n of the current layer.
-                # layers_max.append(tf.reduce_max(tf.nn.relu(layer.output)))
+    output_spikes = []
+    for layer in model.layers:
+        if isinstance(layer, (SpikingDense, SpikingConv2D)):
+            # layer.use_modified_calculation = False
+            layer.compute_output_spiking_times = True
+            if not layer.outputLayer:
                 spike_times.append(layer.output)
                 
-    extractor = tf.keras.Model(inputs=model.inputs, outputs=spike_times)
-    output = extractor.predict(data.x_train, batch_size=64, verbose=1)
-    print(type(output[0]))
-    print(len(output))
-    print(output[0].shape)
-    print(output[1].shape)
-    # print(output[2].shape)
-    # print(output[0][0])
-    X_n = list(map(lambda x: np.max(x), output))
+    extractor_spks = tf.keras.Model(inputs=model.inputs, outputs=spike_times)
+    output_intermediate_spikes = extractor_spks.predict(data.x_train, batch_size=64, verbose=1)
+    
+    print("extracted spike time intermediate layer output shape: ", len(output_intermediate_spikes[0]), len(output_intermediate_spikes[1]))
+    # Compute latency statistics
+    mean_latency_before_dense1 = np.mean(output_intermediate_spikes)
+    
+    logging.info("#### Test set accuracy testing before update####")
+    test_acc = model.evaluate(data.x_test, data.y_test, batch_size=args.batch_size)
+    logging.info("Testing accuracy without update is {}.".format(test_acc))
+    
+    print("Latency before updating parameters:")
+    print(f"Mean latency: {mean_latency_before_dense1:.4f}")
 
-    print("----------")
-    print(model.t_min_overall)
-
-    plt.hist(output[0], bins=20, alpha=0.7)
-    # plt.xlim(1490, 15)
-    plt.title('Output Histogram')
-    plt.xlabel('Time')
-    plt.ylabel('Value Counts')
-    plt.legend()
+    # Plot latency distribution
+    plt.hist(output_intermediate_spikes.flatten(), bins=100)
+    plt.title('Output Spiking Times Before Parameter Update')
+    plt.xlabel('Spiking Time')
+    plt.ylabel('Frequency')
     plt.grid(True)
     plt.show()
+
+
+    spike_times = []
+    # Update parameters
+    logging.info("#### Updating parameters for evaluation ####")
+    for layer in model.layers:
+        if isinstance(layer, (SpikingDense, SpikingConv2D)):
+            # layer.use_modified_calculation = True
+            layer.compute_output_spiking_times = True
+            if not layer.outputLayer:
+                spike_times.append(layer.output)
+
+    extractor_spks = tf.keras.Model(inputs=model.inputs, outputs=spike_times)
+    output_intermediate_spikes = extractor_spks.predict(data.x_train, batch_size=64, verbose=1)
+    
+    for i, layer in enumerate(model.layers):
+        if isinstance(layer, (SpikingDense, SpikingConv2D)):
+            # time_duration = layer.t_max - layer.t_min  # - layer.D_i
+            shift = tf.reduce_min(output_intermediate_spikes[i]) - layer.t_min
+            # shift = time_duration - min_spike_time
+            t_max_new = layer.t_max - shift
+            layer.t_max.assign(t_max_new)
+            print(type(model.layers[i]), len(model.layers))
+            if i < len(model.layers) - 2:
+                print("blabla")
+                model.layers[i+1].t_min.assign(t_max_new)
+  
+    print("extracted spike time intermediate layer output shape: ", len(output_intermediate_spikes), output_intermediate_spikes[0])
+    # Compute latency statistics
+    mean_latency_after_dense1 = np.mean(output_intermediate_spikes)
+    
+    logging.info("#### Test set accuracy testing after update####")
+    test_acc = model.evaluate(data.x_test, data.y_test, batch_size=args.batch_size)
+    logging.info("Testing accuracy with update is {}.".format(test_acc))
+
+    # Plot latency distribution
+    plt.hist(output_intermediate_spikes.flatten(), bins=100, color='orange')
+    plt.title('Output Spiking Times After Parameter Update')
+    plt.xlabel('Spiking Time')
+    plt.ylabel('Frequency')
+    plt.grid(True)
+    plt.show()
+    
+
+    # Compare latencies
+    print("\nLatency Comparison:")
+    print(f"Before updating parameters: Mean = {mean_latency_before_dense1:.4f}")
+    print(f"After updating parameters: Mean = {mean_latency_after_dense1:.4f}")
+
+
+# if 'SNN' in args.model_type:
+#     spike_times = []
+#     for k, layer in enumerate(model.layers):
+#         if 'conv' in layer.name or 'dense' in layer.name:
+#             # if k!=len(model.layers)-2:
+#                 # Calculate X_n of the current layer.
+#                 # layers_max.append(tf.reduce_max(tf.nn.relu(layer.output)))
+#                 spike_times.append(layer.output)
+                
+#     extractor = tf.keras.Model(inputs=model.inputs, outputs=spike_times)
+#     output = extractor.predict(data.x_train, batch_size=64, verbose=1)
+#     print(type(output[0]))
+#     print(len(output))
+#     print(output[0].shape)
+#     print(output[1].shape)
+#     # print(output[2].shape)
+#     # print(output[0][0])
+#     X_n = list(map(lambda x: np.max(x), output))
+
+#     print("----------")
+#     print(model.t_min_overall)
+
+#     plt.hist(output[0].flatten(), bins=100, alpha=0.7)
+#     # plt.xlim(1490, 15)
+#     plt.title('Output Histogram')
+#     plt.xlabel('Time')
+#     plt.ylabel('Value Counts')
+#     plt.legend()
+#     plt.grid(True)
+#     plt.show()
 
 
 
