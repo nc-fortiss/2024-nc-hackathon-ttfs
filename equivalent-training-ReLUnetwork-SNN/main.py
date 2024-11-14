@@ -213,7 +213,7 @@ if 'SNN' in args.model_type:
                 spike_times.append(layer.output)
                 
     extractor_spks = tf.keras.Model(inputs=model.inputs, outputs=spike_times)
-    output_intermediate_spikes = extractor_spks.predict(data.x_train, batch_size=64, verbose=1)
+    output_intermediate_spikes = extractor_spks.predict(data.x_train, batch_size=64, verbose=1) # 60000, 340
     
     print("extracted spike time intermediate layer output shape: ", len(output_intermediate_spikes[0]), len(output_intermediate_spikes[1]))
     # Compute latency statistics
@@ -250,17 +250,34 @@ if 'SNN' in args.model_type:
     
     for i, layer in enumerate(model.layers):
         if isinstance(layer, (SpikingDense, SpikingConv2D)):
-            # time_duration = layer.t_max - layer.t_min  # - layer.D_i
-            shift = tf.reduce_min(output_intermediate_spikes[i]) - layer.t_min
-            # shift = time_duration - min_spike_time
-            t_max_new = layer.t_max - shift
-            layer.t_max.assign(t_max_new)
-            print(type(model.layers[i]), len(model.layers))
             if i < len(model.layers) - 2:
-                print("blabla")
+                # time_duration = layer.t_max - layer.t_min  # - layer.D_i
+                shift = tf.reduce_min(output_intermediate_spikes.flatten()) - layer.t_min
+                print("earliest spike time: ", tf.reduce_min(output_intermediate_spikes.flatten()))
+                print("Shift: ", shift)
+                print("current t_min of the layer: ", layer.name, layer.t_min)
+                # shift = time_duration - min_spike_time
+                t_max_new = layer.t_max - shift
+                print("Old t_max: ", layer.t_max)
+                layer.t_max.assign(t_max_new)
+                print(type(model.layers[i]), len(model.layers))
+                print("T_max new, and layer t_max new", t_max_new, layer.t_max)
                 model.layers[i+1].t_min.assign(t_max_new)
+            print("next layer's t_min value, should be updated: ", layer.name, layer.t_min)
   
-    print("extracted spike time intermediate layer output shape: ", len(output_intermediate_spikes), output_intermediate_spikes[0])
+    print("extracted spike time intermediate layer output shape: ", len(output_intermediate_spikes))
+    
+    spike_times = []
+    for layer in model.layers:
+        if isinstance(layer, (SpikingDense, SpikingConv2D)):
+            # layer.use_modified_calculation = True
+            layer.compute_output_spiking_times = True
+            if not layer.outputLayer:
+                spike_times.append(layer.output)
+
+    extractor_spks = tf.keras.Model(inputs=model.inputs, outputs=spike_times)
+    output_intermediate_spikes = extractor_spks.predict(data.x_train, batch_size=64, verbose=1)
+    print("earliest sike after shifting: ", tf.reduce_min(output_intermediate_spikes.flatten()))
     # Compute latency statistics
     mean_latency_after_dense1 = np.mean(output_intermediate_spikes)
     
@@ -269,6 +286,8 @@ if 'SNN' in args.model_type:
     logging.info("Testing accuracy with update is {}.".format(test_acc))
 
     # Plot latency distribution
+    if output_intermediate_spikes is None:
+        print("nothing to plottttttt")
     plt.hist(output_intermediate_spikes.flatten(), bins=100, color='orange')
     plt.title('Output Spiking Times After Parameter Update')
     plt.xlabel('Spiking Time')
