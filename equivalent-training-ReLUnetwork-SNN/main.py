@@ -29,7 +29,7 @@ parser.add_argument('--time_bits', type=int, default=0, help='number of bits to 
 parser.add_argument('--weight_bits', type=int, default=0, help='number of bits to represent weights. 0 -disabled')
 parser.add_argument('--w_min', type=float, default=-1.0, help='w_min to use if weight_bits is enabled')
 parser.add_argument('--w_max', type=float, default=1.0, help='w_max to use if weight_bits is enabled')
-parser.add_argument('--latency_quantiles', type=float, default=0.0, help='Number of quantiles to take into account when calculating t_max. 0 -disabled')
+parser.add_argument('--latency_quantiles', type=float, default=1.0, help='Number of quantiles to take into account when calculating t_max. 0 -disabled')
 parser.add_argument('--mode', type=str, default='', help='Ignore: A hack to address a bug in argsparse during debugging')
 args = parser.parse_known_args(override)
 if(len(args[1])>0):
@@ -125,9 +125,13 @@ if 'SNN' in args.model_type:
  
 
 if args.testing:
+
     logging.info("#### Initial test set accuracy testing ####")
     test_acc = model.evaluate(data.x_test, data.y_test, batch_size=args.batch_size)
     logging.info("Initial testing accuracy is {}.".format(test_acc))
+                
+    
+   
 
 logging.info("#### Training ####")
 history=model.fit(
@@ -139,10 +143,18 @@ history=model.fit(
     )
 
 if args.testing and args.epochs > 0:
-    # Obtain accuracy of the fine-tuned SNN model.
-    logging.info("#### Final test set accuracy testing ####")
-    test_acc = model.evaluate(data.x_test, data.y_test, batch_size=args.batch_size)
-    logging.info("Final testing accuracy is {}.".format(test_acc))
+    for i in range(5):
+        print("##################################")
+        print("for loop iteration: ", i)
+        for k, layer in enumerate(model.layers):
+            if 'conv' in layer.name or 'dense' in layer.name:
+                # Calculate X_n of the current layer.
+                layer.robustness_params["latency_quantiles"]= 1 - (i+1)*0.2
+                print("Layer param = ", layer.robustness_params["latency_quantiles"])
+        logging.info("#### Final test set accuracy testing ####")
+        test_acc = model.evaluate(data.x_test, data.y_test, batch_size=args.batch_size)
+        logging.info("Fianl testing accuracy is {}.".format(test_acc))
+  
 
 if args.save and 'ReLU' in args.model_type:
     logging.info("#### Saving ReLU model ####")
@@ -168,8 +180,10 @@ if args.save and 'ReLU' in args.model_type:
     for k, layer in enumerate(model.layers):
         if 'conv' in layer.name or 'dense' in layer.name:
             if k!=len(model.layers)-2:
+
                 # Calculate X_n of the current layer.
                 layers_max.append(tf.reduce_max(tf.nn.relu(layer.output)))
+
                 
                 
     
@@ -275,7 +289,7 @@ if 'SNN' in args.model_type:
         """
        
     
-    plt.xlim(0, np.max(output_adjusted[layer_num - 2]) + 100)
+    # plt.xlim(0, np.max(output_adjusted[layer_num - 2]) + 100)
     
     # crop y-axis to see the distribution better since there are some outliers (= no spikes)
     # plt.ylim(0, 0.25 * 1e7)
