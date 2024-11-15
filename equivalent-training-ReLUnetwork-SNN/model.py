@@ -37,6 +37,10 @@ class SpikingDense(tf.keras.layers.Layer):
         self.t_min=tf.Variable(tf.constant(t_min, dtype=tf.float64), trainable=False, name='t_min')
         self.t_max=tf.Variable(tf.constant(t_min+self.B_n, dtype=tf.float64), trainable=False, name='t_max')
         return t_min, t_min+self.B_n
+
+    def set_robustness(self,new_val):
+        self.robustness_params['latency_quantiles'] = new_val
+        return self.robustness_params['latency_quantiles']
             
     def call(self, tj):
         """
@@ -349,7 +353,8 @@ def call_spiking(tj, W, D_i, t_min_prev, t_min, t_max, robustness_params):
 
     # Ensure valid spiking time. Do not spike for ti >= t_max.
     # No spike is modelled as t_max that cancels out in the next layer (tj-t_min) as t_min there is t_max
-    ti = tf.where(ti < robustness_params["latency_quantiles"] * t_max, ti, t_max)
+    # ti = tf.where(ti < robustness_params["latency_quantiles"] * t_max, ti, t_max)
+    ti = tf.where(ti < t_max, ti, t_max)
     print("robustness = ")
     print(robustness_params["latency_quantiles"])
     # Add noise to the spiking time for noise simulations

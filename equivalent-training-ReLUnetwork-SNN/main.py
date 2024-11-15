@@ -142,19 +142,34 @@ history=model.fit(
     validation_data=(data.x_test, data.y_test)
     )
 
+print("--------------------------       HELLO  ---------------------------------------------------")
 if args.testing and args.epochs > 0:
+    # Obtain accuracy of the fine-tuned SNN model.
+    print()
+    logging.info("#### Final test set accuracy testing ####")
+    test_acc = model.evaluate(data.x_test, data.y_test, batch_size=args.batch_size)
+    logging.info("Fianl testing accuracy is {}.".format(test_acc))
+    logging.info("#### Test set accuracy testing for latency quantiles ####")
+    print(model.outputs)
+
+    # Create new model and re-compile with new robustness param
+    model = tf.keras.Model(inputs=model.inputs, outputs=model.outputs[0])
+
+    print("#### Test set accuracy on different t_max cropped values ####")
+    # Try out 5 different cropping values
     for i in range(5):
-        print("##################################")
-        print("for loop iteration: ", i)
-        for k, layer in enumerate(model.layers):
+        for layer in model.layers:
             if 'conv' in layer.name or 'dense' in layer.name:
-                # Calculate X_n of the current layer.
-                layer.robustness_params["latency_quantiles"]= 1 - (i+1)*0.2
-                print("Layer param = ", layer.robustness_params["latency_quantiles"])
-        logging.info("#### Final test set accuracy testing ####")
+                layer.robustness_params['latency_quantiles'] = (1-(i+1)*0.01)
+                print("latency_quantiles=", layer.robustness_params['latency_quantiles'])
+
+        model.compile(metrics=["categorical_accuracy"], loss=tf.keras.losses.CategoricalCrossentropy(from_logits=True),
+                    optimizer=optimizer)
         test_acc = model.evaluate(data.x_test, data.y_test, batch_size=args.batch_size)
-        logging.info("Fianl testing accuracy is {}.".format(test_acc))
-  
+        logging.info("Final testing accuracy is {}.".format(test_acc))
+        model = tf.keras.Model(inputs=model.inputs, outputs=model.outputs[0])
+    print("#### Finish t_max crop ####")
+
 
 if args.save and 'ReLU' in args.model_type:
     logging.info("#### Saving ReLU model ####")
@@ -253,7 +268,7 @@ if 'SNN' in args.model_type:
     #X_n = X_n_loaded
 
     print("----------")
-    print(model.t_min_overall)
+    # print(model.t_min_overall)
 
     """
     plt.hist(output[1].flatten(), bins=20, alpha=1)
@@ -279,7 +294,8 @@ if 'SNN' in args.model_type:
         output_flat = output_adjusted[i].flatten()  
 
         # Filter out all the values higher than t_max
-        output_filter = output_flat[output_flat < t_max_layer] 
+        # output_filter = output_flat[output_flat < t_max_layer] 
+        output_filter = output_flat
 
         plt.hist(output_filter, bins=20, alpha=0.5)
         """
