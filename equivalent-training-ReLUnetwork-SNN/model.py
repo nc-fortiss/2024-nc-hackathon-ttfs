@@ -335,7 +335,7 @@ def call_spiking(tj, W, D_i, t_min_prev, t_min, t_max, robustness_params):
         W = tf.cast(W, tf.float64)
 
     # Calculate the spiking threshold (Eq. 18)
-    threshold = t_max - t_min - D_i
+    threshold = t_max - t_min #- D_i
     # Calculate output spiking time ti (Eq. 7)
     ti = (tf.matmul(tj-t_min, W) + threshold + t_min)
 

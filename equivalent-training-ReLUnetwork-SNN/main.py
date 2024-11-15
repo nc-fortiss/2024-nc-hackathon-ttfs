@@ -63,7 +63,7 @@ data = Dataset(
 # Get optimizer for training.
 optimizer = get_optimizer(args.lr)
 model = None
-layer_num = 5
+layer_num = 6
 logging.info("#### Creating the model ####")
 if 'FC' in args.model_name:
     if 'SNN' in args.model_type:
@@ -209,11 +209,136 @@ if args.save and 'ReLU' in args.model_type:
 
 
 if 'SNN' in args.model_type:
+    history=model.fit(
+        data.x_train, data.y_train,
+        batch_size=args.batch_size,
+        epochs=args.epochs,
+        verbose=1,
+        validation_data=(data.x_test, data.y_test)
+    )
+
+    spike_times, t_max_values = [], []
+    model = tf.keras.Model(inputs=model.inputs, outputs=model.outputs[0])
+    # Update parameters
+    logging.info("#### Updating parameters for evaluation ####")
+    for layer in model.layers:
+        if isinstance(layer, (SpikingDense, SpikingConv2D)):
+            # layer.use_modified_calculation = True
+            # layer.compute_output_spiking_times = True
+            if not layer.outputLayer:
+                spike_times.append(layer.output)
+                t_max_values.append(layer.t_max)
+    model.compile(metrics=["categorical_accuracy"], loss=tf.keras.losses.CategoricalCrossentropy(from_logits=True),
+                  optimizer=optimizer)
+    
+
+    
+    extractor_spks = tf.keras.Model(inputs=model.inputs, outputs=spike_times)
+    output_intermediate_spikes = extractor_spks.predict(data.x_train, batch_size=64, verbose=1)
+
+    test_acc_before = model.evaluate(data.x_test, data.y_test, batch_size=args.batch_size)
+
+    plt.figure(figsize=(10,6))
+    # Plot latency distribution
+    if output_intermediate_spikes is None:
+        print("there is nothing to plottttt")
+    for i in range(len(output_intermediate_spikes)):
+        t_max_layer = t_max_values[i].numpy()
+        output_flat = output_intermediate_spikes[i].flatten()
+        output_filter = output_flat[output_flat < t_max_layer]
+        # Plot the combined histogram
+        plt.hist(output_filter, bins=100)
+
+    t_max_layer_before = t_max_layer
+    plt.title('Output Spiking Times Before Parameter Update')
+    plt.xlabel('Spiking Time')
+    plt.ylabel('Frequency')
+    plt.grid(True)
+    plt.savefig(plot_dir + 'Output Spiking Times Before Parameter Update.png')
+    plt.show()
+
+    shift = 0
+    t_max_new = 1
+    print("Model Layer information: ", len(model.layers))
+    for i, layer in enumerate(model.layers):
+        if isinstance(layer, (SpikingDense, SpikingConv2D)):
+            if i < len(model.layers) - 1:
+                i -= 1
+                layer.t_min.assign(t_max_new)
+                print(layer.name, layer.t_min)
+                # time_duration = layer.t_max - layer.t_min  # - layer.D_i
+                print("INFOO!", i, len(output_intermediate_spikes[i]), type(output_intermediate_spikes[i]))
+                print("minimum spike time of current layer: ")
+                shift = tf.reduce_min(output_intermediate_spikes[i].flatten()) - layer.t_min
+                shift *= 0.7
+                print("earliest spike time: ", tf.reduce_min(output_intermediate_spikes[i].flatten()))
+                print("Shift: ", shift)
+                print("current t_min of the layer: ", layer.name, layer.t_min)
+                # shift = time_duration - min_spike_time
+                t_max_new = layer.t_max - shift
+                print("Old t_max: ", layer.t_max)
+                layer.t_max.assign(t_max_new)
+                print(type(model.layers[i]), len(model.layers))
+                print("T_max new, and layer t_max new", t_max_new, layer.t_max)
+                # model.layers[i+1].t_min.assign(t_max_new)
+                print("next layer's t_min value, should be updated: ", layer.name, layer.t_min)
+                print("next layer's t_max value, should be updated: ", layer.name, layer.t_max)
+
+    
+    history=model.fit(
+        data.x_train, data.y_train,
+        batch_size=args.batch_size,
+        epochs=args.epochs,
+        verbose=1,
+        validation_data=(data.x_test, data.y_test)
+    )
+    
     spike_times = []
-    layers_max = []
+    t_max_values = []
+    model = tf.keras.Model(inputs=model.inputs, outputs=model.outputs[0])
+    for layer in model.layers:
+        if isinstance(layer, (SpikingDense, SpikingConv2D)):
+            # layer.use_modified_calculation = True
+            # layer.compute_output_spiking_times = True
+            if not layer.outputLayer:
+                spike_times.append(layer.output)
+                t_max_values.append(layer.t_max)
+    model.compile(metrics=["categorical_accuracy"], loss=tf.keras.losses.CategoricalCrossentropy(from_logits=True),
+                optimizer=optimizer)
+    
+    extractor_spks = tf.keras.Model(inputs=model.inputs, outputs=spike_times)
+    output_intermediate_spikes = extractor_spks.predict(data.x_train, batch_size=64, verbose=1)
+    for i in range(len(output_intermediate_spikes)):
+        print("earliest spike after shifting: ", tf.reduce_min(output_intermediate_spikes[i].flatten()))
+        
+    logging.info("#### Test set accuracy testing after update####")
+    test_acc = model.evaluate(data.x_test, data.y_test, batch_size=args.batch_size)
+
+    logging.info("Testing accuracy before update is {}.".format(test_acc_before))
+    logging.info("Testing accuracy with update is {}.".format(test_acc))
 
     
     print("Model name: ", args.model_name)
+
+    plt.figure(figsize=(10,6))
+    # Plot latency distribution
+    if output_intermediate_spikes is None:
+        print("there is nothing to plottttt")
+    for i in range(len(output_intermediate_spikes)):
+        t_max_layer = t_max_values[i].numpy()
+        output_flat = output_intermediate_spikes[i].flatten()
+        output_filter = output_flat[output_flat < t_max_layer]
+        # Plot the combined histogram
+        plt.hist(output_filter, bins=100)
+    
+    print("Total Latency before update", t_max_layer_before)
+    print("Total Latency after update", t_max_layer)
+    plt.title('Output Spiking Times After Parameter Update')
+    plt.xlabel('Spiking Time')
+    plt.ylabel('Frequency')
+    plt.grid(True)
+    plt.savefig(plot_dir + 'Output Spiking Times After Parameter Update.png')
+    plt.show()
 
     # Uncomment to load X_n of the ReLU model.
     """
@@ -224,7 +349,7 @@ if 'SNN' in args.model_type:
             print("X_n from ReLU loaded successfully.")
             print("Max_activations for each layer are:", X_n_loaded)
 
-    """
+    
     
     adjusted_spike_times = []
     for k, layer in enumerate(model.layers):
@@ -255,6 +380,10 @@ if 'SNN' in args.model_type:
     print("----------")
     print(model.t_min_overall)
 
+    
+    
+    """
+    
     """
     plt.hist(output[1].flatten(), bins=20, alpha=1)
     # plt.xlim(1490, 15)
@@ -264,7 +393,7 @@ if 'SNN' in args.model_type:
     plt.legend()
     plt.grid(True)
     plt.show()
-    """
+    
     plt.figure(figsize=(10, 6))
 
     y_lim_max = float(10000)
@@ -291,6 +420,7 @@ if 'SNN' in args.model_type:
     else:
         plt.savefig(plot_dir + title + '.png')
     plt.show()
+    """
     
     
     

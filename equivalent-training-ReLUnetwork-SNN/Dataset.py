@@ -1,6 +1,6 @@
 import numpy as np
 import tensorflow as tf
-import cv2  # For image processing (install with `pip install opencv-python` if needed)
+#import cv2  # For image processing (install with `pip install opencv-python` if needed)
 import os
 import pandas as pd
 

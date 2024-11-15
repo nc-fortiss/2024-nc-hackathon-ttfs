@@ -1,0 +1,14 @@
+INFO:root:#### Creating the model ####
+INFO:root:#### Loading weights ####
+INFO:root:#### Setting SNN intervals ####
+INFO:root:#### Initial test set accuracy testing ####
+INFO:root:Initial testing accuracy is [2.3023060749053954, 2.3023060749053954, 0.0866].
+INFO:root:#### Final test set accuracy testing ####
+INFO:root:Final testing accuracy is [2.3023060749053954, 2.3023060749053954, 0.0866].
+WARNING:tensorflow:Gradients do not exist for variables ['dense_1/D_i:0', 'dense_2/D_i:0', 'dense_3/D_i:0', 'dense_4/D_i:0', 'dense_5/D_i:0'] when minimizing the loss.
+WARNING:tensorflow:Gradients do not exist for variables ['dense_1/D_i:0', 'dense_2/D_i:0', 'dense_3/D_i:0', 'dense_4/D_i:0', 'dense_5/D_i:0'] when minimizing the loss.
+INFO:root:#### Updating parameters for evaluation ####
+WARNING:tensorflow:Gradients do not exist for variables ['dense_1/D_i:0', 'dense_2/D_i:0', 'dense_3/D_i:0', 'dense_4/D_i:0', 'dense_5/D_i:0'] when minimizing the loss.
+INFO:root:#### Test set accuracy testing after update####
+INFO:root:Testing accuracy before update is [0.1684947084953077, 0.954].
+INFO:root:Testing accuracy with update is [3.157135423659553, 0.9511].
