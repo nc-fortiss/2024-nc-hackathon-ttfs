@@ -364,4 +364,3 @@ def call_spiking(tj, W, D_i, t_min_prev, t_min, t_max, robustness_params):
    
 
     return ti
-
