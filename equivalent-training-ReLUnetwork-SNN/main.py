@@ -10,6 +10,7 @@ start_time = time.time()
 tf.keras.backend.set_floatx('float64') #to avoid numerical differences when comparing training of ReLU vs SNN
 override = None
 
+
 strtobool = (lambda s: s=='True')
 parser = argparse.ArgumentParser(description='TTFS')
 parser.add_argument('--data_name', type=str, default='MNIST', help='(MNIST|CIFAR10|CIFAR100)')
