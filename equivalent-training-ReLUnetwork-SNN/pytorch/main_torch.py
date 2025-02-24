@@ -39,3 +39,18 @@ if(len(args[1])>0):
 # print(args)
 args = args[0]
 
+
+''' 
+    Instantiate objects with given parameters 
+'''
+args.model_name = args.data_name + '-' + args.model_name
+
+robustness_params={
+    'noise':args.noise,
+    'time_bits':args.time_bits,
+    'weight_bits': args.weight_bits,
+    'w_min': args.w_min,
+    'w_max': args.w_max,
+    'latency_quantiles':args.latency_quantiles
+}
+
