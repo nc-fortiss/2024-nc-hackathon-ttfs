@@ -1,4 +1,5 @@
 import argparse
+from dataset_torch import Dataset_Torch
 
 override = None       # hard-code args parameters instead of passing them over the CLI
 
@@ -53,4 +54,11 @@ robustness_params={
     'w_max': args.w_max,
     'latency_quantiles':args.latency_quantiles
 }
+
+dataset = Dataset_Torch(
+    args.data_name,
+    flatten= ('FC' in args.model_name),
+    convert_ttfs = ('SNN' in args.model_type),   
+    ttfs_noise=args.noise,
+)
 
