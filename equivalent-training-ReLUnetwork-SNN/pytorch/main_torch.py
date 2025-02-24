@@ -61,4 +61,3 @@ dataset = Dataset_Torch(
     convert_ttfs = ('SNN' in args.model_type),   
     ttfs_noise=args.noise,
 )
-

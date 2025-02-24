@@ -10,7 +10,7 @@ class Dataset_Torch:
         name: the name of the dataset to use (MNIST, CIFAR, ...)
         flatten: boolean, if True then the input tensor is flattened to fit the 1st layer
         ttfs_noise: TODO
-        convert_ttfs: boolean, if True then the input pixel values are converted into TTFS spikes
+        convert_ttfs: boolean flag, if True then the input pixel values are converted into TTFS spikes
         input_shape: shape of the original input
         train_sample: TODO
         q,p: TODO
@@ -22,13 +22,11 @@ class Dataset_Torch:
         self.name = dataset_name
         self.flatten = flatten  
         self.ttfs_noise = ttfs_noise 
+        self.convert_ttfs = convert_ttfs
 
         self.get_features_vectors()         # pass 'flatten' as a variable instead of setting it as an attribute (?)
         self.convert_ttfs = convert_ttfs
-        if convert_ttfs:
-            self.convert_ttfs()
-
-    
+      
     def get_features_vectors(self):
         """
         Load image datasets and turn pixels into features. 
@@ -43,6 +41,12 @@ class Dataset_Torch:
                 return x.reshape(-1)  # Flatten to 1-D vector for fully connected input layer
             else: 
                 return x.reshape(28, 28, 1)   # Add grayscale dimension
+            
+        def convert_ttfs_fun(x):
+        
+            # TODO: iterate over the entire feature set and apply conversion (?)
+
+            return 0
 
         def to_float_64(x):
             return x.to(dtype=torch.float64)
@@ -57,7 +61,8 @@ class Dataset_Torch:
             data_transform = transforms.Compose([
                 transforms.ToTensor(),  # Converts (H, W) → (1, H, W) and normalizes to [0,1]
                 transforms.Lambda(lambda x: to_float_64(x)), 
-                transforms.Lambda(lambda x: conditional_flatten(x,flatten=self.flatten))   # Re-shapes input tensors as needed
+                transforms.Lambda(lambda x: conditional_flatten(x,flatten=self.flatten)),   # Re-shapes input tensors as needed
+                transforms.Lambda(lambda x: convert_ttfs_fun(x))
             ])
 
             if self.name=='MNIST':
@@ -70,9 +75,4 @@ class Dataset_Torch:
                 self.test_set = datasets.FashionMNIST(root='./datasets/FASHION_MNIST', train=False, download=True, transform=data_transform)
 
 
-    def convert_ttfs():
-        
-        # TODO: iterate over the entire feature set and apply conversion (?)
-
-        return 0
         
