@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import torch.utils
 from torchvision import datasets, transforms
 
 
@@ -16,6 +17,7 @@ class Dataset_Torch:
         q,p: TODO
         num_of_classes: total number of distinct output labels for classification
         train_set, test_set: contain the training and testset datasets (including both features and labels)
+        train_load, test_load: provides the respective DataLoader interface for accessing batches
     '''
 
     def __init__(self, dataset_name, flatten, convert_ttfs, ttfs_noise=0, ):
@@ -24,12 +26,16 @@ class Dataset_Torch:
         self.ttfs_noise = ttfs_noise 
         self.convert_ttfs = convert_ttfs
 
-        self.get_features_vectors()         # pass 'flatten' as a variable instead of setting it as an attribute (?)
+        self.get_features_vectors()         # TODO: pass 'flatten' as a variable instead of setting it as an attribute (?)
         self.convert_ttfs = convert_ttfs
+
+        self.train_load = torch.utils.data.DataLoader(self.train_set, batch_size=64,shuffle=True)
+        self.test_load = torch.utils.data.DataLoader(self.test_set, batch_size=64,shuffle=False)
+
       
     def get_features_vectors(self):
         """
-        Load image datasets and turn pixels into features. 
+        Load image datasets and turn pixels into features by applying the proper transforms. 
         """
         
         def conditional_flatten(x, flatten):
@@ -73,6 +79,7 @@ class Dataset_Torch:
             else:
                 self.train_set = datasets.FashionMNIST(root='./datasets/FASHION_MNIST', train=True, download=True, transform=data_transform)
                 self.test_set = datasets.FashionMNIST(root='./datasets/FASHION_MNIST', train=False, download=True, transform=data_transform)
+
 
 
         
