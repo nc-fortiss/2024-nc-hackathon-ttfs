@@ -62,7 +62,7 @@ class Dataset_Torch:
                 transforms.ToTensor(),  # Converts (H, W) → (1, H, W) and normalizes to [0,1]
                 transforms.Lambda(lambda x: to_float_64(x)), 
                 transforms.Lambda(lambda x: conditional_flatten(x,flatten=self.flatten)),   # Re-shapes input tensors as needed
-                transforms.Lambda(lambda x: convert_ttfs_fun(x))
+                # transforms.Lambda(lambda x: convert_ttfs_fun(x))
             ])
 
             if self.name=='MNIST':

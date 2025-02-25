@@ -1,5 +1,6 @@
 import argparse
 from dataset_torch import Dataset_Torch
+from model_torch import torch_fc_model_ReLU
 
 override = None       # hard-code args parameters instead of passing them over the CLI
 
@@ -61,3 +62,16 @@ dataset = Dataset_Torch(
     convert_ttfs = ('SNN' in args.model_type),   
     ttfs_noise=args.noise,
 )
+
+
+
+nn = torch_fc_model_ReLU()
+print(nn)
+
+first_training_tuple = dataset.train_set[0]
+first_tensor = first_training_tuple[0]
+print(type(first_tensor))
+
+res = nn.forward(first_tensor)
+print(res)
+
