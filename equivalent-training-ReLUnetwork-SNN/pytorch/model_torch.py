@@ -51,10 +51,36 @@ class FC_ReLU_torch(nn.Module):
     def forward(self,x):
         for layer in self.layers_list:
             x = F.relu(layer(x))
-
         return x
+    
+    def fit(self,train_data, optimizer,loss_criterion,epochs=5):
+        '''
+            Train the neural network on the input 'train_data'. 
+            Adapted from: https://pytorch.org/tutorials/beginner/blitz/cifar10_tutorial.html#train-the-network (Accessed 24/02/2025)
+        '''
+        self.train()
+        for epoch in range(epochs):  
+
+            running_loss = 0.0
+            for batch_idx, (data,target) in enumerate(train_data):
+                
+                optimizer.zero_grad()
+
+                outputs = self.forward(data)
+                loss = loss_criterion(outputs, target)
+                loss.backward()
+                optimizer.step()
+
+                # print statistics
+                running_loss += loss.item()
+                if batch_idx % 100 == 0:    
+                    print(f'[{epoch + 1}, {batch_idx + 1:5d}] loss: {running_loss / 100:.3f}')
+                    running_loss = 0.0
+
+        print('Finished Training')
 
 
 def torch_fc_model_ReLU(layers=2, N_hid=340,N_in=784, N_out=10):
     ''' Returns instance of a fully-connected ReLU network '''
     return FC_ReLU_torch(layers, N_hid, N_in, N_out)
+

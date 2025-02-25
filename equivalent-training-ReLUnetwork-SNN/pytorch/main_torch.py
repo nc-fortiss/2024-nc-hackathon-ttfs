@@ -1,6 +1,8 @@
 import argparse
 from dataset_torch import Dataset_Torch
 from model_torch import torch_fc_model_ReLU
+import torch
+from torch import nn
 
 override = None       # hard-code args parameters instead of passing them over the CLI
 
@@ -64,14 +66,13 @@ dataset = Dataset_Torch(
 )
 
 
+print("--- Create instance of FC_ReLU: ---\n")
+model = torch_fc_model_ReLU()
+print(model)
+print("\n")
 
-nn = torch_fc_model_ReLU()
-print(nn)
-
-first_training_tuple = dataset.train_set[0]
-first_tensor = first_training_tuple[0]
-print(type(first_tensor))
-
-res = nn.forward(first_tensor)
-print(res)
-
+print("--- Train the FC_ReLU network: ---\n")
+epochs = 5
+optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+loss_fn = nn.CrossEntropyLoss()
+model.fit(dataset.train_load, optimizer=optimizer, loss_criterion=loss_fn, epochs=epochs)
