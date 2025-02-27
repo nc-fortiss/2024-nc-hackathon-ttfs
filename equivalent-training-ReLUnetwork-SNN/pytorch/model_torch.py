@@ -25,7 +25,7 @@ class SpikingDenseTorch(nn.Module):
     '''
 
     def __init__(self, N_in, N_out, X_n=1, robustness_params={}, kernel_regularizer=None, kernel_initializer=None):
-        super(SpikingDenseTorch).__init__()
+        super().__init__()
 
         self.N_in = N_in
         self.N_out = N_out
@@ -76,27 +76,26 @@ class FC_ReLU_torch(nn.Module):
         # Dynamically adjust the configuration of hidden layers based on input.
         # The definition of an Input() dummy tensor as done in the tensorflow implementation can be skipped; here the first hidden layer is created directly
         # Adapted from: https://discuss.pytorch.org/t/how-to-create-mlp-model-with-arbitrary-number-of-hidden-layers/13124 (accessed 24/02/2025)
-        self.input_layer = nn.Linear(self.N_in, self.N(1), dtype=torch.float64)
         self.hidden_layers = nn.ModuleList()
 
-        # !!!!!!                                                                      TODO !!! -> ADJUST LOOP TO ACCOUNT FOR CORRECT N. OF HIDDEN LAYERS 
+        # Add the 1st hidden layer by default
+        self.hidden_layers.append(nn.Linear(self.N_in, self.N(1), dtype=torch.float64))
+
+        # If layers > 2 (default), keep adding fully-connected Dense layers 
         for i in range(self.N_layers-2):
             self.hidden_layers.append(nn.Linear(self.N(i+2), self.N(i+2), dtype=torch.float64)) 
 
+        # Add output layer separately
         self.output_layer = nn.Linear(self.N(self.N_layers), self.N_out, dtype=torch.float64)
 
 
     def forward(self,x):
-        # ReLU on input layer
-        x = F.relu(self.input_layer(x))
-
         # Skip ReLU on the output layer
         for layer in self.hidden_layers[:-1]:
             x = F.relu(layer(x))
 
-        x = self.output_layer(x)
         # pass the logits from penultimate hidden layer to output layer
-        # x = self.hidden_layers[-1](x)
+        x = self.output_layer(x)
         return x
     
     def fit(self,train_data, optimizer,loss_criterion,epochs=5):
@@ -136,11 +135,21 @@ class FC_ReLU_torch(nn.Module):
 
 class FC_SNN_torch(nn.Module):
     ''' Defines instance of a fully-connected SNN model
+
+    Attributes:
+        N_layers: number of hidden layers
+        N_hid: number of neurons in hidden layers. Can be of type (int) or List[int]
+        N_in: number of neurons in the input layer
+        N_out: number of neurons in the output layer (number of classes)
+        X_n: window-scaling factor (TODO: clarify)
+        N(l): lambda to extract 'N_hid' if it is a list
+        hidden_layers: list of nn.Module hidden layers
+
     
     
     '''
-    def __init__(self, layers, N_hid, N_in, N_out, X_n, robustness_params):
-        super(FC_SNN_torch).__init__()
+    def __init__(self, layers, N_hid, N_in, N_out, X_n, robustness_params, kernel_regularizer, kernel_initializer):#
+        super().__init__()
         self.N_layers=layers 
         self.N_hid = N_hid
         self.N_in = N_in 
@@ -149,13 +158,15 @@ class FC_SNN_torch(nn.Module):
 
         self.N = lambda l: (N_hid[l-1] if type(N_hid)==list else N_hid)
 
-        self.input_layer = SpikingDenseTorch(self.N_in, self.N(1), (X_n[0] if type(X_n)==list else X_n), robustness_params)
-        self.hidden_layers = nn.ModuleList()
+        # Initialize list of hidden layer modules and append 1st default hidden layer
+        self.hidden_layers = nn.ModuleList() 
+        self.hidden_layers.append(SpikingDenseTorch(self.N_in, self.N(1), (X_n[0] if type(X_n)==list else X_n)))
 
         for i in range(self.N_layers-2):
             self.hidden_layers.append(SpikingDenseTorch(self.N(i+2), self.N(i+2), (X_n[i+1] if type(X_n)==list else X_n))) 
 
-        self.output_layer = SpikingDenseTorch(self.N(self.N_layers), self.N_out, robustness_params)
+
+        self.output_layer = SpikingDenseTorch(self.N(self.N_layers), self.N_out, robustness_params=robustness_params)
 
         
 
@@ -165,4 +176,4 @@ def create_torch_fc_model_ReLU(layers=2, N_hid=340,N_in=784, N_out=10):
 
 def create_torch_fc_model_SNN(layers=2, N_hid=340, N_in=784, N_out=10, X_n=1000, robustness_params={}):
     ''' Returns an instance of a fully-connected SNN model '''
-    return FC_SNN_torch(layers,N_hid,N_in,N_out,X_n,robustness_params, kernel_regularizer=None, kernel_initializer=None)
+    return FC_SNN_torch(layers,N_hid,N_in,N_out,X_n,robustness_params=robustness_params, kernel_regularizer=None, kernel_initializer=None)
