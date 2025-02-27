@@ -1,6 +1,6 @@
 import argparse
 from dataset_torch import Dataset_Torch
-from model_torch import torch_fc_model_ReLU
+import model_torch
 import torch
 from torch import nn
 
@@ -58,6 +58,7 @@ robustness_params={
     'latency_quantiles':args.latency_quantiles
 }
 
+''' Instantiate Data Loaders with appropriate parameters'''
 dataset = Dataset_Torch(
     args.data_name,
     flatten= ('FC' in args.model_name),
@@ -65,11 +66,35 @@ dataset = Dataset_Torch(
     ttfs_noise=args.noise,
 )
 
-
+''' Instantiate model '''
 print("--- Create instance of FC_ReLU: ---\n")
-model = torch_fc_model_ReLU()
+model = model_torch.create_torch_fc_model_SNN(layers=3)
 print(model)
 print("\n")
+
+
+''' Load weights '''
+# TODO 
+
+''' Iterate over each hidden layer, plus the output layer, 
+    and set the SNN interval time boundaries for each one. '''
+if 'SNN' in args.model_type:
+    print("### Setting SNNS intervals ####")
+    t_min, t_max = 0, 1  
+    c = 0
+    for child in model.children():
+            print(child)
+            
+            if isinstance(child, nn.ModuleList):    # the hidden layers appear under a single child node as a moduleList
+                for layer in child: 
+                    t_min, t_max = layer.set_intervals(t_min, t_max)
+                    print(f"c={c} -> B_n = {layer.B_n}; t_min_prev={layer.t_min_prev}; t_min={layer.t_min}; t_max={layer.t_max}\n")
+                    c += 1
+            else: 
+                t_min, t_max = child.set_intervals(t_min,t_max)    # for the output layer 
+                print(f"c={c} -> B_n = {child.B_n}; t_min_prev={child.t_min_prev}; t_min={child.t_min}; t_max={child.t_max}\n")
+                c+=1 
+
 
 print("--- Train the FC_ReLU network: ---\n")
 epochs = 5
