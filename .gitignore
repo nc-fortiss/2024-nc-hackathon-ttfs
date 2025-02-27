@@ -1,2 +1,4 @@
 data
 *venv/
+logs/
+datasets/
