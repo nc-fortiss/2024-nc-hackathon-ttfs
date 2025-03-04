@@ -17,11 +17,14 @@ Or follow: https://docs.anaconda.com/miniconda/
 
 ## Get Started
 
-1. Clone reposity
+Tensorflow-only implementation: 
+1. Clone repository
 2. Step into repository: `cd 2024-nc-hackathon-ttfs`
 2. Create conda environment: `conda env create -f environment.yml`
 3. Activate conda environment: `conda activate nc-hackathon`
 
+Tensorflow+pytorch implementation:
+Replace the path at step 2 with: `cd 2024-nc-hackathon-ttfs/equivalent-training-ReLUnetwork-SNN`
 
 ## Test time-to-first-spike setup:
 
