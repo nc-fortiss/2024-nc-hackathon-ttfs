@@ -50,6 +50,7 @@ class Dataset_Torch:
             # TODO: apply noise to test data
             x = (x - self.p) / (self.q - self.p)
             x = 1 - np.array(x)
+            x = torch.tensor(x,dtype=torch.float64)
             return x 
         
         def add_noise(x, noise):

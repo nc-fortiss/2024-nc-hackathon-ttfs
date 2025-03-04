@@ -2,3 +2,6 @@ data
 *venv/
 logs/
 datasets/
+__pycache__/
+*.pyc
+*.pyo
