@@ -315,6 +315,17 @@ def call_spiking(tj, W, D_i, t_min_prev, t_min, t_max, robustness_params):
 
     # Calculate the spiking threshold (Eq. 18)
     threshold = t_max - t_min - D_i
+
+    #### For debugging only ####
+    '''
+    # breakpoint()
+    print("call spiking")
+    print("t_min=", t_min)
+    print("t_max=", t_max)
+    print(tf.get_static_value(tj))
+    print("D_i=", tf.get_static_value(D_i))
+    print("threshold= ",tf.get_static_value(threshold))
+    '''
     # Calculate output spiking time ti (Eq. 7)
     ti = (tf.matmul(tj-t_min, W) + threshold + t_min)
     # Ensure valid spiking time. Do not spike for ti >= t_max.
