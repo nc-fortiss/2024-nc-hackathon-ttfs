@@ -10,6 +10,10 @@ start_time = time.time()
 tf.keras.backend.set_floatx('float64') #to avoid numerical differences when comparing training of ReLU vs SNN
 override = None
 
+# example run: python3 main.py --data_name=MNIST --model_type=SNN --model_name=FC2 --testing=False
+# hint for debugging: to print the values of a tensor, use tf.get_static_value(tensor_input)
+# import pdb
+
 
 strtobool = (lambda s: s=='True')
 parser = argparse.ArgumentParser(description='TTFS')
@@ -119,6 +123,12 @@ if args.testing:
     logging.info("#### Initial test set accuracy testing ####")
     test_acc = model.evaluate(data.x_test, data.y_test, batch_size=args.batch_size)
     logging.info("Initial testing accuracy is {}.".format(test_acc))
+
+
+logging.info("#### Attempt a single forward pass ####")
+x = data.x_train[0]
+x_expanded = tf.expand_dims(x, axis=0)
+model(x_expanded)
 
 logging.info("#### Training ####")
 history=model.fit(
