@@ -3,6 +3,7 @@ from dataset_torch import Dataset_Torch
 import model_torch
 import torch
 from torch import nn
+from torchsummary import summary
 
 override = None       # hard-code args parameters instead of passing them over the CLI
 
@@ -71,6 +72,14 @@ print("--- Create instance of FC_ReLU: ---\n")
 model = model_torch.create_torch_fc_model_SNN(layers=3)
 print(model)
 print("\n")
+print("--- Get model parameters ---")
+# summary(model, (1,28,28))
+
+
+print("\n\n--- Attempt forward pass ---\n")
+tuple = dataset.train_set.__getitem__(0)
+x = tuple[0]
+print(x.shape)
 
 
 ''' Load weights '''
@@ -78,6 +87,7 @@ print("\n")
 
 ''' Iterate over each hidden layer, plus the output layer, 
     and set the SNN interval time boundaries for each one. '''
+
 if 'SNN' in args.model_type:
     print("### Setting SNNS intervals ####")
     t_min, t_max = 0, 1  
@@ -95,9 +105,8 @@ if 'SNN' in args.model_type:
                 print(f"c={c} -> B_n = {child.B_n}; t_min_prev={child.t_min_prev}; t_min={child.t_min}; t_max={child.t_max}\n")
                 c+=1 
 
-
 print("--- Train the FC_ReLU network: ---\n")
 epochs = 5
-optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+optimizer = torch.optim.SGD(list(model.parameters()), lr=0.01)
 loss_fn = nn.CrossEntropyLoss()
 model.fit(dataset.train_load, optimizer=optimizer, loss_criterion=loss_fn, epochs=epochs)
