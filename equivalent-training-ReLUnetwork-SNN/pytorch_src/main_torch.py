@@ -3,6 +3,7 @@ from dataset_torch import Dataset_Torch
 import model_torch
 import torch
 from torch import nn
+import pdb
 
 override = None       # hard-code args parameters instead of passing them over the CLI
 
@@ -75,18 +76,11 @@ dataset = Dataset_Torch(
 model = None 
 if 'SNN' in args.model_type:
     print("--- Create instance of FC_SNN: ---\n")
-    model = model_torch.create_torch_fc_model_SNN(layers=3)
+    model = model_torch.create_torch_fc_model_SNN(layers=2, robustness_params=robustness_params)
 else: 
     print("--- Create instance of FC_ReLU: ---\n")
     model = model_torch.create_torch_fc_model_ReLU(layers=3)
 
-print(model)
-print("\n")
-
-print("\n\n--- Attempt forward pass ---\n")
-tuple = dataset.train_set.__getitem__(0)
-x = tuple[0]
-print(x.shape)
 
 
 ''' Load weights '''
@@ -111,6 +105,15 @@ if 'SNN' in args.model_type:
                 t_min, t_max = child.set_intervals(t_min,t_max)    # for the output layer 
                 print(f"c={c} -> B_n = {child.B_n}; t_min_prev={child.t_min_prev}; t_min={child.t_min}; t_max={child.t_max}\n")
                 c+=1 
+
+
+print("\n--- Attempt forward pass ---\n")
+tuple = dataset.train_set.__getitem__(0)
+x = tuple[0]
+print(x.shape)
+print(model)
+y = model(x)
+print(y)
 
 print("--- Train the FC_ReLU network: ---\n")
 epochs = 5
