@@ -37,22 +37,28 @@ class Dataset_Torch:
         """
         Load image datasets and turn pixels into features by applying the proper transforms. 
         """
-        
+        ''' A series of lambda functions to be used as transform compositions on the input data '''
         def conditional_flatten(x, flatten):
-            '''
-                Lambda function for a custom transform to 
-                re-shape and/or flatten the input if fully connected layer is first   
-            '''
+            ''' Re-shape and/or flatten the input if fully connected layer is first '''
             if flatten:
                 return x.reshape(-1)  # Flatten to 1-D vector for fully connected input layer
             else: 
                 return x.reshape(28, 28, 1)   # Add grayscale dimension
             
         def convert_ttfs_fun(x):
+            ''' Convert input pixel values into time-to-first-spike spiking times. '''
+            # TODO: apply noise to test data
+            x = (x - self.p) / (self.q - self.p)
+            x = 1 - np.array(x)
+            return x 
         
-            # TODO: iterate over the entire feature set and apply conversion (?)
+        def add_noise(x, noise):
+            ''' Add random noise to the input of the test set '''
 
-            return 0
+            x = x + torch.normal(mean=0.0, std=noise, size=x.shape)
+            x = np.maximum(0, x)
+            return x 
+
 
         def to_float_64(x):
             return x.to(dtype=torch.float64)
@@ -64,22 +70,24 @@ class Dataset_Torch:
             self.num_of_classes = 10
 
             # Apply transforms and conversions directly in the data-loading step as opposed to the load, then convert approach as in tensorflow
-            data_transform = transforms.Compose([
+            train_transform = transforms.Compose([
                 transforms.ToTensor(),  # Converts (H, W) → (1, H, W) and normalizes to [0,1]
                 transforms.Lambda(lambda x: to_float_64(x)), 
-                transforms.Lambda(lambda x: conditional_flatten(x,flatten=self.flatten)),   # Re-shapes input tensors as needed
-                # transforms.Lambda(lambda x: convert_ttfs_fun(x))
+                transforms.Lambda(lambda x: conditional_flatten(x, self.flatten)),   # Re-shapes input tensors as needed
+                transforms.Lambda(lambda x: convert_ttfs_fun(x) if self.convert_ttfs else  x)   # Converts pixels into spikes if needed
+            ])
+
+            test_transform = transforms.Compose(train_transform.transforms + [
+                transforms.Lambda(lambda x: add_noise(x, self.ttfs_noise))  # Additional transform for test only
             ])
 
             if self.name=='MNIST':
                 # 'download=True' downloads the data from internet, if not already done; 'train=True' specifies training set
                 # 'root=PATH' specifies the directory where the dataset shall be saved 
-                self.train_set = datasets.MNIST(root='./datasets/MNIST', train=True, download=True, transform=data_transform)
-                self.test_set = datasets.MNIST(root='./datasets/MNIST', train=False, download=True, transform=data_transform)
+                self.train_set = datasets.MNIST(root='./datasets/MNIST', train=True, download=True, transform=train_transform)
+                self.test_set = datasets.MNIST(root='./datasets/MNIST', train=False, download=True, transform=test_transform)
             else:
-                self.train_set = datasets.FashionMNIST(root='./datasets/FASHION_MNIST', train=True, download=True, transform=data_transform)
-                self.test_set = datasets.FashionMNIST(root='./datasets/FASHION_MNIST', train=False, download=True, transform=data_transform)
+                self.train_set = datasets.FashionMNIST(root='./datasets/FASHION_MNIST', train=True, download=True, transform=train_transform)
+                self.test_set = datasets.FashionMNIST(root='./datasets/FASHION_MNIST', train=False, download=True, transform=test_transform)
 
-
-
-        
+                
