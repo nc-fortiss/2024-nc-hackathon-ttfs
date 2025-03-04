@@ -14,13 +14,26 @@ def call_spiking(tj, W, D_i, t_min_prev, t_min, t_max, robustness_params):
     # Calculate the spiking threshold (Eq. 18)
     threshold = t_max - t_min - D_i
     # Calculate output spiking time ti (Eq. 7)
+    ### Debugging only ###
+    '''
+    print("call spiking")
+    print("t_min=", t_min)
+    print("t_max=", t_max)
+    print("tj=", tj)
+
+
+    print("D_i=",D_i)
+    print("thres=", threshold)
+    print("\n")
+    # breakpoint()
+    '''
     ti = (torch.matmul(tj-t_min, W) + threshold + t_min)
 
     # Ensure valid spiking time. Do not spike for ti >= t_max.
     # No spike is modelled as t_max that cancels out in the next layer (tj-t_min) as t_min there is t_max
     ti = torch.where(ti < t_max, ti, t_max)
     # Add noise to the spiking time for noise simulations
-    ti = ti + torch.normal(std=robustness_params['noise'], size=ti.shape, dtype=torch.float64)
+    ti = ti + torch.normal(mean=0.0, std=robustness_params['noise'], size=ti.shape, dtype=torch.float64)
     return ti
 
 class SpikingDenseTorch(nn.Module):
@@ -61,7 +74,7 @@ class SpikingDenseTorch(nn.Module):
         else: 
             init.xavier_uniform_(self.kernel)           # initialize weight tensor, with initializer if provided
 
-        self.D_i = nn.Parameter(torch.zeros(N_in, N_out))
+        self.D_i = nn.Parameter(torch.zeros(N_out))
         
     def set_intervals(self, t_min_prev,t_min):
         ''' Sets t_min_prev, t_min, and t_max for this layer. The bounds are determined and set 
@@ -194,10 +207,10 @@ class FC_SNN_torch(nn.Module):
 
         # Initialize list of hidden layer modules and append 1st default hidden layer
         self.hidden_layers = nn.ModuleList() 
-        self.hidden_layers.append(SpikingDenseTorch(self.N_in, self.N(1), (X_n[0] if type(X_n)==list else X_n)))
+        self.hidden_layers.append(SpikingDenseTorch(self.N_in, self.N(1), (X_n[0] if type(X_n)==list else X_n), robustness_params=robustness_params))
 
         for i in range(self.N_layers-2):        # If N_layers > 2, append the rest of the layers
-            self.hidden_layers.append(SpikingDenseTorch(self.N(i+2), self.N(i+2), (X_n[i+1] if type(X_n)==list else X_n))) 
+            self.hidden_layers.append(SpikingDenseTorch(self.N(i+2), self.N(i+2), (X_n[i+1] if type(X_n)==list else X_n), robustness_params=robustness_params)) 
 
 
         self.output_layer = SpikingDenseTorch(self.N(self.N_layers), self.N_out, robustness_params=robustness_params, is_output=True)
