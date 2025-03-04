@@ -179,7 +179,7 @@ class FC_SNN_torch(nn.Module):
         N(l): lambda to extract 'N_hid' if it is a list
         hidden_layers: list of nn.Module hidden layers
 
-    
+    # TODO: define min_ti's as in tensorflow    
     
     '''
     def __init__(self, layers, N_hid, N_in, N_out, X_n, robustness_params, kernel_regularizer, kernel_initializer):

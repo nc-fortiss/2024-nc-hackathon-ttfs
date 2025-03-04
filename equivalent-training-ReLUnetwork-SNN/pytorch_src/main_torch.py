@@ -3,9 +3,12 @@ from dataset_torch import Dataset_Torch
 import model_torch
 import torch
 from torch import nn
-from torchsummary import summary
 
 override = None       # hard-code args parameters instead of passing them over the CLI
+
+# Example run scripts, useful for testing 
+# python3 main_torch.py --data_name=MNIST --model_type=ReLU --model_name=FC2
+# python3 main_torch.py --data_name=MNIST --model_type=SNN --model_name=FC2
 
 '''
     Command-line argument parsing
@@ -68,13 +71,17 @@ dataset = Dataset_Torch(
 )
 
 ''' Instantiate model '''
-print("--- Create instance of FC_ReLU: ---\n")
-model = model_torch.create_torch_fc_model_SNN(layers=3)
+
+model = None 
+if 'SNN' in args.model_type:
+    print("--- Create instance of FC_SNN: ---\n")
+    model = model_torch.create_torch_fc_model_SNN(layers=3)
+else: 
+    print("--- Create instance of FC_ReLU: ---\n")
+    model = model_torch.create_torch_fc_model_ReLU(layers=3)
+
 print(model)
 print("\n")
-print("--- Get model parameters ---")
-# summary(model, (1,28,28))
-
 
 print("\n\n--- Attempt forward pass ---\n")
 tuple = dataset.train_set.__getitem__(0)
@@ -109,4 +116,4 @@ print("--- Train the FC_ReLU network: ---\n")
 epochs = 5
 optimizer = torch.optim.SGD(list(model.parameters()), lr=0.01)
 loss_fn = nn.CrossEntropyLoss()
-model.fit(dataset.train_load, optimizer=optimizer, loss_criterion=loss_fn, epochs=epochs)
+# model.fit(dataset.train_load, optimizer=optimizer, loss_criterion=loss_fn, epochs=epochs)
