@@ -70,3 +70,4 @@ class Dataset:
         self.x_test, self.x_train = (self.x_test - self.p)/(self.q-self.p), (self.x_train - self.p)/(self.q-self.p)
         self.x_train, self.x_test=1 - np.array(self.x_train), 1 - np.array(self.x_test)
         self.x_test=np.maximum(0, self.x_test + tf.random.normal((self.x_test).shape, stddev=self.noise, dtype=tf.dtypes.float64))
+        
