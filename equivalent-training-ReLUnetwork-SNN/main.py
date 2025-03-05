@@ -10,8 +10,8 @@ start_time = time.time()
 tf.keras.backend.set_floatx('float64') #to avoid numerical differences when comparing training of ReLU vs SNN
 override = None
 
-# example run: python3 main.py --data_name=MNIST --model_type=SNN --model_name=FC2 --testing=False
-# hint for debugging: to print the values of a tensor, use tf.get_static_value(tensor_input)
+# example run: python3 main.py --data_name=MNIST --model_type=SNN --model_name=FC2 --testing=False --epochs=1
+# hint for debugging: to print the values of a tensor, use tf.get_static_value(tensor_input) or also tf.keras.backend.eval(y_all)
 # import pdb
 
 
@@ -179,3 +179,10 @@ if args.save and 'ReLU' in args.model_type:
     logging.info('saved maximum layer output')
 
 print('### Total elapsed time [s]:', time.time() - start_time)
+print("\n")
+logging.info("#### Attempt a single forward pass ####")
+x = data.x_train[0]
+x_expanded = tf.expand_dims(x, axis=0)
+y = model(x_expanded)
+print(y)
+print(data.y_train[0])
