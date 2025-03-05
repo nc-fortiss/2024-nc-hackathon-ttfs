@@ -1,5 +1,6 @@
 import argparse
 from dataset_torch import Dataset_Torch
+from train_torch import train_FC_SNN, evaluate_FC_SNN
 import model_torch
 import torch
 from torch import nn
@@ -117,6 +118,13 @@ print(y)
 
 print("--- Train the FC_ReLU network: ---\n")
 epochs = 5
-optimizer = torch.optim.SGD(list(model.parameters()), lr=0.01)
+lr = 0.0001
+optimizer = torch.optim.Adam(list(model.parameters()), lr=lr)
 loss_fn = nn.CrossEntropyLoss()
-# model.fit(dataset.train_load, optimizer=optimizer, loss_criterion=loss_fn, epochs=epochs)
+train_FC_SNN(model, dataset.train_load, epochs, optimizer=optimizer)
+print("--- Finished training the FC model ---")
+y = model(x)
+print(y)
+
+print("--- Evaluating model on the test set ---")
+evaluate_FC_SNN(model, dataset.test_load)

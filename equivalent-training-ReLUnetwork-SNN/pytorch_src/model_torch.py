@@ -69,7 +69,7 @@ class SpikingDenseTorch(nn.Module):
         self.initializer = kernel_initializer
 
         self.kernel = nn.Parameter(torch.empty((N_in,N_out), dtype=torch.float64))    # register weight in model
-        if kernel_initializer: 
+        if kernel_initializer:      # TODO: allow custom initializer
             i = 0
         else: 
             init.xavier_uniform_(self.kernel)           # initialize weight tensor, with initializer if provided

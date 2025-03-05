@@ -1,5 +1,6 @@
 import logging
 import tensorflow as tf
+tf.config.run_functions_eagerly(True)
 from tensorflow.keras.layers import Conv2D, Input, Dense, MaxPool2D, Flatten, Dropout, BatchNormalization
 from tensorflow.keras.models import Model
 from utils import *
@@ -137,6 +138,7 @@ class ModelTmax(tf.keras.Model):
         super(ModelTmax, self).__init__(**kwargs)
 
     def train_step(self, data):
+        # breakpoint()
         x, y_all = data
         with tf.GradientTape() as tape:
             y_pred_all = self(x, training=False) 
