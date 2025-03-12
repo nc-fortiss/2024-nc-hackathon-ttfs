@@ -14,7 +14,7 @@ class Dataset_Torch:
         convert_ttfs: boolean flag, if True then the input pixel values are converted into TTFS spikes
         input_shape: shape of the original input
         train_sample: TODO
-        q,p: TODO
+        q,p: normalization range (default: [0,1])
         num_of_classes: total number of distinct output labels for classification
         train_set, test_set: contain the training and testset datasets (including both features and labels)
         train_load, test_load: provides the respective DataLoader interface for accessing batches
@@ -46,8 +46,12 @@ class Dataset_Torch:
                 return x.reshape(28, 28, 1)   # Add grayscale dimension
             
         def convert_ttfs_fun(x):
-            ''' Convert input pixel values into time-to-first-spike spiking times. '''
-            # TODO: apply noise to test data
+            ''' Convert input pixel values into time-to-first-spike spiking times. 
+                At first, each pixel goes through a min-max normalization, by default in the [0,1] range. 
+                Then, each pixel's intensity is flipped by substracting 1 from the pixel value.
+                This ensures that light pixels with a high intensity will be close to 0 and therefore fire early. 
+                Viceversa, dark pixels will be close to 1 and will have a later firing spike time at the input layer. 
+            '''
             x = (x - self.p) / (self.q - self.p)
             x = 1 - np.array(x)
             x = torch.tensor(x,dtype=torch.float64)
@@ -67,7 +71,7 @@ class Dataset_Torch:
 
         if 'MNIST' in self.name:
             self.input_shape, self.train_sample=(28, 28, 1), 1/64
-            self.q, self.p = 1.0, 0.0       # TODO: understand what p and q are
+            self.q, self.p = 1.0, 0.0       
             self.num_of_classes = 10
 
             # Apply transforms and conversions directly in the data-loading step as opposed to the load, then convert approach as in tensorflow
