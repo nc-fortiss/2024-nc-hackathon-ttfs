@@ -238,6 +238,25 @@ class FC_SNN_torch(nn.Module):
         
         x = self.output_layer(x)
         return x 
+    
+    def set_snn_intervals(self, t_min_start=0, t_max_start=1):
+        ''' Helper function to create the [t_min, t_max] boundaries for the 
+            integrate vs spike time windows for each layer. 
+            't_min_start' and 't_max_start' define the min/max time values in the input layer. 
+        '''
+        t_min, t_max= t_min_start, t_max_start
+        layer_num = 0
+        config_utils.logging.info("\n")
+        for child in self.children():
+            if isinstance(child, nn.ModuleList):    # the hidden layers appear under a single child node as a moduleList
+                for layer in child: 
+                    t_min, t_max = layer.set_intervals(t_min, t_max)
+                    config_utils.logging.info(f"    hidden layer_num={layer_num} -> B_n = {layer.B_n:>7.2f}; t_min_prev={layer.t_min_prev:>7.2f};   t_min={layer.t_min:>7.2f}; t_max={layer.t_max:>7.2f}")
+                    layer_num += 1
+            else: 
+                t_min, t_max = child.set_intervals(t_min,t_max)    # for the output layer 
+                config_utils.logging.info(f"    output layer_num={layer_num} -> B_n = {child.B_n:>7.2f}; t_min_prev={child.t_min_prev:>7.2f};   t_min={child.t_min:>7.2f}; t_max={child.t_max:>7.2f}\n")
+                layer_num+=1 
         
 
 def create_torch_fc_model_ReLU(layers=2, N_hid=340,N_in=784, N_out=10):

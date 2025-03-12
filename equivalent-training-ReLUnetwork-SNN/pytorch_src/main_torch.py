@@ -5,15 +5,16 @@ import config_utils
 from model_torch import *
 import torch
 from torch import nn
+import matplotlib.pyplot as plt
 import pdb
 
 
 override = None       # hard-code args parameters instead of passing them over the CLI
 
 # Example run scripts, useful for testing 
-# Train FC ReLU only:                  python3 main_torch.py --data_name=MNIST --model_type=ReLU --model_name=FC2
-# Train FC SNN, save parameters:       python3 main_torch.py --data_name=MNIST --model_type=SNN --model_name=FC2 --save=True 
-# Load SNN model, evaluate test:       python3 main_torch.py --data_name=MNIST --model_type=SNN --model_name=FC2 --load=True --testing=True --epochs=0
+# Train FC ReLU only:                           python3 main_torch.py --data_name=MNIST --model_type=ReLU --model_name=FC2
+# Train FC SNN only (no conversion):            python3 main_torch.py --data_name=MNIST --model_type=SNN --model_name=FC2 --epochs=5
+# Fine-tune SNN on ANN weights, evaluate test:  python3 main_torch.py --data_name=MNIST --model_type=SNN --model_name=FC2 --load=True --testing=True --epochs=0
 #
         
 '''
@@ -26,6 +27,7 @@ parser.add_argument('--data_name', type=str, default='MNIST', help='(MNIST|CIFAR
 parser.add_argument('--logging_dir', type=str, default='./logs/', help='Directory for logging')         
 parser.add_argument('--model_type', type=str, default='SNN', help='(SNN|ReLU)')                                             # choose between SNN and ReLU                              
 parser.add_argument('--model_name', type=str, default='FC2', help='Should contain (FC2|VGG[BN]): e.g. VGG_BN_test1')
+parser.add_argument('--layers', type=int, default='2', help='number of layers for a FC model')
 
 # Hyperparameters
 parser.add_argument('--lr', type=float, default=0.0005, help='Learning rate')
@@ -81,10 +83,10 @@ dataset = Dataset_Torch(
 model = None 
 if 'SNN' in args.model_type:
     config_utils.logging.info("### Create instance of FC_SNN: ###\n")
-    model = create_torch_fc_model_SNN(layers=3, robustness_params=robustness_params)
+    model = create_torch_fc_model_SNN(layers=args.layers, robustness_params=robustness_params)
 elif 'ReLU' in args.model_type: 
     config_utils.logging.info("### Create instance of FC_ReLU: ###\n")
-    model = create_torch_fc_model_ReLU(layers=3)
+    model = create_torch_fc_model_ReLU(layers=args.layers)
 
 if model is None: 
     print('Please specify a valid model. Exiting.')
@@ -98,6 +100,10 @@ print("\n")
 
 if 'SNN' in args.model_type:
     config_utils.logging.info("### Setting SNNS intervals ####")
+    model.set_snn_intervals(0,1)
+
+
+    '''
     t_min, t_max = 0, 1  
     layer_num = 0
     for child in model.children():
@@ -112,7 +118,7 @@ if 'SNN' in args.model_type:
                 t_min, t_max = child.set_intervals(t_min,t_max)    # for the output layer 
                 config_utils.logging.info(f"layer_num={layer_num} -> B_n = {child.B_n}; t_min_prev={child.t_min_prev}; t_min={child.t_min}; t_max={child.t_max}\n")
                 layer_num+=1 
-
+    '''
 ''' Make a forward pass pre-training'''
 config_utils.logging.info("--- Attempt forward pass ---")
 model.eval()
@@ -158,7 +164,7 @@ if args.save == True:
 
 ''' Make another forward pass post-training, log the input spike times and plot them '''
 config_utils.logging.info("\n\n\n--- Attempt another forward pass ---\n")
-config_utils.DEBUG_MODE = True
+config_utils.DEBUG_MODE = True          # this will enable the logging+print statements in each forward pass call
 config_utils.clean_spike_logs() 
 model.eval()
 tuple = dataset.train_set.__getitem__(0)
@@ -166,10 +172,7 @@ x = tuple[0]
 config_utils.logging.info(f"Shape of input x: {(x.shape)}")
 y = model(x)
 config_utils.logging.info(f"Model output: {y}")
-
 config_utils.plot_input_spikes()
-
-
 config_utils.DEBUG_MODE = False 
 
 ''' Evaluate the model on testset post-training '''
