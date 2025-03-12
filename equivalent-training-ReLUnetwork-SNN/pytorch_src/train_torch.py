@@ -3,12 +3,11 @@
 '''
 
 import torch
-import torch.optim as optim
 import torch.nn.functional as F
-from model_torch import FC_SNN_torch
+import config_utils
 
 
-def train_FC_SNN(model, train_loader, epochs, optimizer):
+def train_FC_SNN(model, train_loader, epochs, optimizer, scheduler):
     ''' Training loop for the fully-connected SNN, from scratch using BPTT '''
 
     # Loop over epochs
@@ -32,7 +31,8 @@ def train_FC_SNN(model, train_loader, epochs, optimizer):
             total_samples += truth_labels.shape[0]
 
             running_loss += loss.item()
-        
+
+        scheduler.step()        # update learning rate 
 
         print(f"Epoch {epoch+1}/{epochs}, Loss: {running_loss/len(train_loader):.4f}, Acc: {100.*correct  /total_samples: .3f}")
         print("in total predicted: ", total_samples)
@@ -44,11 +44,10 @@ def evaluate_FC_SNN(model, test_loader):
     correct = 0 
     total = 0
     test_loss = 0.0 
-
     with torch.no_grad():
         for inputs, truth_labels in test_loader:
             output_logits = model(inputs)
-            predicted_labels = torch.argmax(output_logits, 1)
+            predicted_labels = torch.argmax(output_logits, dim=1)
             correct += (predicted_labels == truth_labels).sum().item()
             test_loss += torch.nn.functional.cross_entropy(output_logits, truth_labels).item()
 
@@ -56,4 +55,4 @@ def evaluate_FC_SNN(model, test_loader):
     accuracy = 100 * correct / len(test_loader.dataset)
     test_loss /= len(test_loader)
 
-    print(f"Test Accuracy: {accuracy:.2f}% | Test Loss: {test_loss:.4f}")
+    config_utils.logging.info(f"--- TEST Accuracy: {accuracy:.2f}% | Test Loss: {test_loss:.4f} ---")
