@@ -78,8 +78,9 @@ class Dataset_Torch:
                 transforms.Lambda(lambda x: convert_ttfs_fun(x) if self.convert_ttfs else  x)   # Converts pixels into spikes if needed
             ])
 
+            # extend the train_transform object with one additional transform, applied only to the testset
             test_transform = transforms.Compose(train_transform.transforms + [
-                transforms.Lambda(lambda x: add_noise(x, self.ttfs_noise))  # Additional transform for test only
+                transforms.Lambda(lambda x: add_noise(x, self.ttfs_noise))  
             ])
 
             if self.name=='MNIST':
