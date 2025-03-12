@@ -1,17 +1,21 @@
 import argparse
 from dataset_torch import Dataset_Torch
 from train_torch import train_FC_SNN, evaluate_FC_SNN
-import model_torch
+import config_utils
+from model_torch import *
 import torch
 from torch import nn
 import pdb
 
+
 override = None       # hard-code args parameters instead of passing them over the CLI
 
 # Example run scripts, useful for testing 
-# python3 main_torch.py --data_name=MNIST --model_type=ReLU --model_name=FC2
-# python3 main_torch.py --data_name=MNIST --model_type=SNN --model_name=FC2
-
+# Train FC ReLU only:                  python3 main_torch.py --data_name=MNIST --model_type=ReLU --model_name=FC2
+# Train FC SNN, save parameters:       python3 main_torch.py --data_name=MNIST --model_type=SNN --model_name=FC2 --save=True 
+# Load SNN model, evaluate test:       python3 main_torch.py --data_name=MNIST --model_type=SNN --model_name=FC2 --load=True --testing=True --epochs=0
+#
+        
 '''
     Command-line argument parsing
 '''
@@ -46,7 +50,7 @@ parser.add_argument('--mode', type=str, default='', help='Ignore: A hack to addr
 args = parser.parse_known_args(override)
 if(len(args[1])>0):
     print("Warning: Ignored args", args[1])
-# print(args)
+print("Argument parameters: \n", args[0])
 args = args[0]
 
 
@@ -54,7 +58,7 @@ args = args[0]
     Instantiate objects with given parameters 
 '''
 args.model_name = args.data_name + '-' + args.model_name
-
+config_utils.set_up_logging(args.logging_dir, args.model_name)
 robustness_params={
     'noise':args.noise,
     'time_bits':args.time_bits,
@@ -76,55 +80,102 @@ dataset = Dataset_Torch(
 
 model = None 
 if 'SNN' in args.model_type:
-    print("--- Create instance of FC_SNN: ---\n")
-    model = model_torch.create_torch_fc_model_SNN(layers=2, robustness_params=robustness_params)
-else: 
-    print("--- Create instance of FC_ReLU: ---\n")
-    model = model_torch.create_torch_fc_model_ReLU(layers=3)
+    config_utils.logging.info("### Create instance of FC_SNN: ###\n")
+    model = create_torch_fc_model_SNN(layers=3, robustness_params=robustness_params)
+elif 'ReLU' in args.model_type: 
+    config_utils.logging.info("### Create instance of FC_ReLU: ###\n")
+    model = create_torch_fc_model_ReLU(layers=3)
 
+if model is None: 
+    print('Please specify a valid model. Exiting.')
+    exit(1)
 
-
-''' Load weights '''
-# TODO 
+print(model)
+print("\n") 
 
 ''' Iterate over each hidden layer, plus the output layer, 
     and set the SNN interval time boundaries for each one. '''
 
 if 'SNN' in args.model_type:
-    print("### Setting SNNS intervals ####")
+    config_utils.logging.info("### Setting SNNS intervals ####")
     t_min, t_max = 0, 1  
-    c = 0
+    layer_num = 0
     for child in model.children():
-            print(child)
+            config_utils.logging.info(child)
             
             if isinstance(child, nn.ModuleList):    # the hidden layers appear under a single child node as a moduleList
                 for layer in child: 
                     t_min, t_max = layer.set_intervals(t_min, t_max)
-                    print(f"c={c} -> B_n = {layer.B_n}; t_min_prev={layer.t_min_prev}; t_min={layer.t_min}; t_max={layer.t_max}\n")
-                    c += 1
+                    config_utils.logging.info(f"layer_num={layer_num} -> B_n = {layer.B_n}; t_min_prev={layer.t_min_prev}; t_min={layer.t_min}; t_max={layer.t_max}\n")
+                    layer_num += 1
             else: 
                 t_min, t_max = child.set_intervals(t_min,t_max)    # for the output layer 
-                print(f"c={c} -> B_n = {child.B_n}; t_min_prev={child.t_min_prev}; t_min={child.t_min}; t_max={child.t_max}\n")
-                c+=1 
+                config_utils.logging.info(f"layer_num={layer_num} -> B_n = {child.B_n}; t_min_prev={child.t_min_prev}; t_min={child.t_min}; t_max={child.t_max}\n")
+                layer_num+=1 
 
-
-print("\n--- Attempt forward pass ---\n")
+''' Make a forward pass pre-training'''
+config_utils.logging.info("--- Attempt forward pass ---")
+model.eval()
 tuple = dataset.train_set.__getitem__(0)
 x = tuple[0]
-print(x.shape)
-print(model)
+config_utils.logging.info(f"Shape of input x: {(x.shape)}")
 y = model(x)
-print(y)
+config_utils.logging.info(f"Model output: {y}")
 
-print("--- Train the FC_ReLU network: ---\n")
-epochs = 5
-lr = 0.0001
-optimizer = torch.optim.Adam(list(model.parameters()), lr=lr)
-loss_fn = nn.CrossEntropyLoss()
-train_FC_SNN(model, dataset.train_load, epochs, optimizer=optimizer)
-print("--- Finished training the FC model ---")
+''' Make a test run on testset pre-training '''
+if args.testing == True:
+    config_utils.logging.info("--- Evaluating model on testset with no training ---")
+    evaluate_FC_SNN(model, dataset.test_load)
+
+''' Load pre-trained weights as needed '''
+if args.load == True:
+    # TODO: understand if it makes sense to save and load the full SNN weights ( - test accuracy drops immediately after loading)
+    print("### Loading pre-trained weights ###")
+    load_path = args.logging_dir + 'model/full_snn_weights.pth'
+    model.load_state_dict(torch.load(load_path, weights_only=True))
+
+''' Start training loop '''
+if args.epochs > 0:
+    config_utils.logging.info("--- Train the model: ---\n")
+    optimizer = torch.optim.Adam(list(model.parameters()), lr=args.lr, weight_decay=1e-4)    # applying regularization (weight_decay) turns out to be crucial for training
+
+    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.9)      # step-wise learning rate adjustment
+    loss_fn = nn.CrossEntropyLoss()
+
+    train_FC_SNN(model, dataset.train_load, args.epochs, optimizer=optimizer, scheduler=scheduler)
+    config_utils.logging.info("--- Finished training the model ---")
+
+    config_utils.logging.info("--- Evaluating model on testset ---")
+    evaluate_FC_SNN(model, dataset.test_load)
+
+
+''' Save model weights post-training'''
+if args.save == True:
+    # save the SNN when trained fully from scratch to avoid re-training (this is NOT the ANN-SNN conversion step)
+    save_path = args.logging_dir + 'model/full_snn_weights.pth'
+    config_utils.logging.info(f"Saving model post-training to {save_path}")
+    torch.save(model.state_dict(), save_path)   # save weights as dict rather than the entire model
+
+''' Make another forward pass post-training, log the input spike times and plot them '''
+config_utils.logging.info("\n\n\n--- Attempt another forward pass ---\n")
+config_utils.DEBUG_MODE = True
+config_utils.clean_spike_logs() 
+model.eval()
+tuple = dataset.train_set.__getitem__(0)
+x = tuple[0]
+config_utils.logging.info(f"Shape of input x: {(x.shape)}")
 y = model(x)
-print(y)
+config_utils.logging.info(f"Model output: {y}")
 
-print("--- Evaluating model on the test set ---")
-evaluate_FC_SNN(model, dataset.test_load)
+config_utils.plot_input_spikes()
+
+
+config_utils.DEBUG_MODE = False 
+
+''' Evaluate the model on testset post-training '''
+if args.testing == True:
+    config_utils.logging.info("--- Evaluating model on testset post-training ---")
+    evaluate_FC_SNN(model, dataset.test_load)
+
+
+

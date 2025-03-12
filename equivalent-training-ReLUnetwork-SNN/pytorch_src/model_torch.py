@@ -2,7 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
-
+import numpy as np
+import config_utils
 
 # import pdb   # debugger
 
@@ -51,6 +52,8 @@ class SpikingDenseTorch(nn.Module):
             initializer = # TODO
             kernel: # TODO // trainable neuron weight
             is_output: boolean flag, True if self is the output layer
+            D_i: # TODO 
+
     '''
 
     def __init__(self, N_in, N_out, X_n=1, robustness_params={}, kernel_regularizer=None, kernel_initializer=None, is_output=False):
@@ -97,6 +100,19 @@ class SpikingDenseTorch(nn.Module):
             W_mult_x = torch.matmul(self.t_min-tj, self.kernel)
             self.alpha = self.D_i/(self.t_min-self.t_min_prev)
             ti = self.alpha * (self.t_min - self.t_min_prev) + W_mult_x
+        
+        # save TI times per layer in the logs if debugging is enabled 
+        # skip output layer since no more spikes will be produced
+        if config_utils.DEBUG_MODE and not self.is_output:
+            # print("-----------------------------------------------------------------")
+            # config_utils.logging.info("Writing TI's outputs after call_spiking")
+            # config_utils.logging.info(ti.tolist())
+
+            filename = config_utils.LOGGING_DIR + 'spike_output.txt'
+            with open (filename, 'a+') as f:
+                f.write(' '.join(str(ti) for ti in ti.tolist()))        # convert tensor to list and separate values by a ' '
+                f.write('\n')
+
         return ti
 
 
