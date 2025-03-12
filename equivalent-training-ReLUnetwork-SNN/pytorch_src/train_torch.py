@@ -9,7 +9,6 @@ import config_utils
 
 def train_FC_SNN(model, train_loader, epochs, optimizer, scheduler):
     ''' Training loop for the fully-connected SNN, from scratch using BPTT '''
-
     # Loop over epochs
     for epoch in range(epochs):
         model.train()       # set model to train mode
@@ -55,4 +54,4 @@ def evaluate_FC_SNN(model, test_loader):
     accuracy = 100 * correct / len(test_loader.dataset)
     test_loss /= len(test_loader)
 
-    config_utils.logging.info(f"--- TEST Accuracy: {accuracy:.2f}% | Test Loss: {test_loss:.4f} ---")
+    print(f"--- Test Accuracy: {accuracy:.2f}% | Test Loss: {test_loss:.4f} ---")
