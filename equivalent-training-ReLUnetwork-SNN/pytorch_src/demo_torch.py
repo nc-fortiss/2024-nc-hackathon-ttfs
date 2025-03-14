@@ -112,19 +112,18 @@ scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.9)
 loss_fn = nn.CrossEntropyLoss()
 config_utils.logging.info("### Train the SNN on the training set ###")
 train_FC_SNN(model, dataset.train_load, epochs=1, optimizer=optimizer, scheduler=scheduler)
+config_utils.logging.info("### Done training the SNN ###\n\n")
 
-config_utils.logging.info("### Evaluation on testset ###")
-evaluate_FC_SNN(model, dataset.test_load)
 
-# Pass the input image from above to test a forward pass 
-config_utils.logging.info("### Perform forward pass on the sample input ###\n")
+''' ------------------ Visualize distribution of spiking timestamps per layer during a (single) forward pass ------------ '''
+config_utils.logging.info("### Performing forward pass on the sample input ###")
 config_utils.DEBUG_MODE = True          
 config_utils.clean_spike_logs() 
 model.eval()
 y = model(transformed_input_tensor)
+config_utils.DEBUG_MODE = False 
 config_utils.logging.info(f"### Model predicted label: {torch.argmax(y)}\n")
 
-''' ------------------ Visualize distribution of spiking timestamps per layer during a forward pass ------------ '''
 # Read the input/output spike times from the logs
 path = config_utils.LOGGING_DIR + 'spike_output.txt'
 spikes_per_layer = []
@@ -134,14 +133,12 @@ with open(path, 'r') as f:
         line = line.strip("\n")  
         spikes = [round(float(v), 2) for v in line.split()]
         spikes_per_layer.append(spikes)
-# print(spikes_per_layer)
-
 
 labels = ["Input Layer"] + layer_labels
 labels = layer_labels
 plt.hist(x = spikes_per_layer, label=labels, bins=100, alpha=0.7, edgecolor="black", rwidth=0.7)      
 plt.xlim(0, None)
-plt.xlabel("Time")
+plt.xlabel("Layer Output // Spike Time")
 plt.ylabel("Frequency")
 plt.title("Distribution of Spike Timings per layer")
 plt.grid(axis="y", linestyle="--", alpha=0.7) 
@@ -156,4 +153,66 @@ plt.legend(unique_labels.values(), unique_labels.keys(), loc="upper left")
 plt.show()
 
 
-''' --------------- Visualize distribution of spiking timestamps across the entire training process------------ '''
+''' ------------------ Visualize distribution of spiking timestamps per layer during entire training process ------------ '''
+
+config_utils.logging.info("### Visualize spiking time activations during training phase ###")
+fig = plt.figure(figsize=(12, 5))
+
+for i in range(len((model.layer_activations))):
+    config_utils.logging.info(f"### Layer {i}: {len(model.layer_activations[i])} layer output activations // spike timing timestamps")
+    plt.hist(model.layer_activations[i], bins=100, alpha=0.7, log=True)
+
+# plt.hist(model.layer_activations[0], bins=100, alpha=0.7, log=True)
+
+# plt.xlim(0, None)
+plt.yscale("log")
+plt.xlabel("Output Activations // Spike Timing Timestamps")
+plt.ylabel("Frequency")
+plt.title("Distribution of Spike Timings per layer - over total training process")
+plt.grid(axis="y", linestyle='--', alpha=0.6)
+plt.show()
+
+# ---------------------------------------------------------------------------- #
+fig = plt.figure(figsize=(12, 5))
+
+plt.hist(model.layer_activations[0], bins=20, alpha=0.7, density=True)
+
+plt.xlim(0, 6000)
+plt.yscale("log")
+plt.xlabel("Output Activations // Spike Timing Timestamps")
+plt.ylabel("Frequency")
+plt.title("Distribution of Spike Timings per layer - over total training process")
+plt.show()
+# ---------------------------------------------------------------------------- #
+
+fig = plt.figure(figsize=(12, 5))
+
+plt.hist(model.layer_activations[0], bins=50, alpha=0.7, density=True)
+plt.xlabel("Output Activations // Spike Timing Timestamps")
+plt.ylabel("Frequency")
+plt.title("Distribution of Spike Timings per layer - over total training process")
+plt.show()
+
+# ---------------------------------------------------------------------------  #
+fig = plt.figure(figsize=(12, 5))
+
+
+for i in range(len((model.layer_activations))):
+    config_utils.logging.info(f"### Layer {i}: {len(model.layer_activations[i])} layer output activations // spike timing timestamps")
+    plt.hist(model.layer_activations[i], bins=20, alpha=0.9, log=True, density=True)
+
+plt.xlim(0, None)
+plt.yscale("log")
+plt.xlabel("Output Activations // Spike Timing Timestamps")
+plt.ylabel("Frequency")
+plt.title("Distribution of Spike Timings per layer - over total training process")
+plt.grid(axis="y", linestyle='--', alpha=0.6)
+plt.show()
+
+
+
+
+
+#-----------------------------------------------------------------------------------#
+config_utils.logging.info("### Evaluation on testset ###")
+evaluate_FC_SNN(model, dataset.test_load)

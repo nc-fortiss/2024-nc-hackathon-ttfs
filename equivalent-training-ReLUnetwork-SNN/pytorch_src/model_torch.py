@@ -231,10 +231,19 @@ class FC_SNN_torch(nn.Module):
 
         self.output_layer = SpikingDenseTorch(self.N(self.N_layers), self.N_out, robustness_params=robustness_params, is_output=True)
 
+        # Store the layer-wise spike-time outputs as a list of lists
+        self.layer_activations = [ np.empty([0]) for _ in range(len(self.hidden_layers)) ]
+        self.list_activations = [ [] for _ in range(len(self.hidden_layers))]
+
     def forward(self, x):
         ''' Defines the forward pass through the entire SNN architecture '''
-        for l in self.hidden_layers:
+
+        # Store the activations for this current batch
+        for i, l in enumerate(self.hidden_layers):
             x = l(x)
+            # breakpoint()
+            self.layer_activations[i] = np.append(self.layer_activations[i], x.flatten().detach().numpy())  
+            self.list_activations[i].extend(x.flatten().detach().tolist())
         
         x = self.output_layer(x)
         return x 
