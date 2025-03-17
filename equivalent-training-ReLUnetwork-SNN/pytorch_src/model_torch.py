@@ -4,6 +4,7 @@ import torch.nn.functional as F
 import torch.nn.init as init
 import numpy as np
 import config_utils
+import h5py
 
 # import pdb   # debugger
 
@@ -233,18 +234,33 @@ class FC_SNN_torch(nn.Module):
 
         # Store the layer-wise spike-time outputs as a list of lists
         self.layer_activations = [ np.empty([0]) for _ in range(len(self.hidden_layers)) ]
+        # self.list_activations = nn.Parameter
         self.list_activations = [ [] for _ in range(len(self.hidden_layers))]
+
+        # Register hooks to capture activations
+        # self.activations = {f"layer_{i}": [] for i in range(len(self.hidden_layers))}
+        # for i, layer in enumerate(self.hidden_layers):
+          #  layer.register_forward_hook(self._create_hook_fn(f"layer_{i}"))
 
     def forward(self, x):
         ''' Defines the forward pass through the entire SNN architecture '''
 
         # Store the activations for this current batch
+        # activations_dict = {} 
         for i, l in enumerate(self.hidden_layers):
             x = l(x)
+
             # breakpoint()
-            self.layer_activations[i] = np.append(self.layer_activations[i], x.flatten().detach().numpy())  
-            self.list_activations[i].extend(x.flatten().detach().tolist())
-        
+            ''' use: self.layer_activations[i] = np.append(self.layer_activations[i], x.flatten().detach().numpy()) '''
+            # self.list_activations[i].extend(x.flatten().detach().tolist())
+
+            if config_utils.DEBUG_MODE:
+                self.layer_activations[i] = np.append(self.layer_activations[i], x.flatten().detach().numpy())
+                self.list_activations[i].extend(x.flatten().detach().tolist())
+                # activations_dict[f"layer_{i}"] = x.detach().cpu().numpy() 
+
+        # save_path = config_utils.LOGGING_DIR + 'activations.npz'
+        # np.savez(save_path, **activations_dict)
         x = self.output_layer(x)
         return x 
     
@@ -266,6 +282,20 @@ class FC_SNN_torch(nn.Module):
                 t_min, t_max = child.set_intervals(t_min,t_max)    # for the output layer 
                 config_utils.logging.info(f"    output layer_num={layer_num} -> B_n = {child.B_n:>7.2f}; t_min_prev={child.t_min_prev:>7.2f};   t_min={child.t_min:>7.2f}; t_max={child.t_max:>7.2f}\n")
                 layer_num+=1 
+
+    def _create_hook_fn(self, layer_name):
+        ''' Creates a hook function for a specific layer '''
+        def hook_fn(module, input, output):
+            self.activations[layer_name].append(output.detach().cpu().numpy())
+        return hook_fn
+    
+    def save_activations(self, save_path):
+        ''' Saves activations to an HDF5 file '''
+        with h5py.File(save_path, 'w') as f:
+            for layer_name, activation_list in self.activations.items():
+                # Concatenate all activations for this layer
+                activations = np.concatenate(activation_list, axis=0)
+                f.create_dataset(layer_name, data=activations, dtype='float32')
         
 
 def create_torch_fc_model_ReLU(layers=2, N_hid=340,N_in=784, N_out=10):
