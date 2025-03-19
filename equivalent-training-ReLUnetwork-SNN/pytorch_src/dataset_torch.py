@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import torch.utils
 from torchvision import datasets, transforms
-
+from PIL import ImageFilter
 
 class Dataset_Torch:
     ''' Creates and returns train and test data, in the proper format, shape and values by importing from torch datasets
@@ -68,6 +68,10 @@ class Dataset_Torch:
         def to_float_64(x):
             return x.to(dtype=torch.float64)
         
+        def apply_grayscale_MNIST(x):
+            x[x == 1] = 0.8
+            return x
+        
 
         if 'MNIST' in self.name:
             self.input_shape, self.train_sample=(28, 28, 1), 1/64
@@ -76,10 +80,13 @@ class Dataset_Torch:
 
             # Apply transforms and conversions directly in the data-loading step as opposed to the load, then convert approach as in tensorflow
             train_transform = transforms.Compose([
+                # transforms.Lambda(lambda x: x.filter(ImageFilter.GaussianBlur(1))),
+                # transforms.RandomGrayscale(p=0.7),
                 transforms.ToTensor(),  # Converts (H, W) → (1, H, W) and normalizes to [0,1]
                 transforms.Lambda(lambda x: to_float_64(x)), 
                 transforms.Lambda(lambda x: conditional_flatten(x, self.flatten)),   # Re-shapes input tensors as needed
-                transforms.Lambda(lambda x: convert_ttfs_fun(x) if self.convert_ttfs else  x)   # Converts pixels into spikes if needed
+                transforms.Lambda(lambda x: convert_ttfs_fun(x) if self.convert_ttfs else  x) 
+                # transforms.Lambda(lambda x: apply_grayscale_MNIST(x))   # Converts pixels into spikes if needed
             ])
 
             # extend the train_transform object with one additional transform, applied only to the testset

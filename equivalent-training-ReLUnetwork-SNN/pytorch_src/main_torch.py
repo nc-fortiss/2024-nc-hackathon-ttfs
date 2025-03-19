@@ -78,6 +78,13 @@ dataset = Dataset_Torch(
     ttfs_noise=args.noise,
 )
 
+fig, ax = plt.subplots(figsize=(9, 10))
+first_tensor = dataset.train_set[0][0]
+first_tensor = torch.reshape(first_tensor, (28,28))
+im = ax.imshow(first_tensor, cmap='gray_r')
+cbar = fig.colorbar(im, ax=ax)
+plt.show()
+
 ''' Instantiate model '''
 
 model = None 
