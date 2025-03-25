@@ -9,6 +9,7 @@ import time
 start_time = time.time()
 tf.keras.backend.set_floatx('float64') #to avoid numerical differences when comparing training of ReLU vs SNN
 override = None
+import h5py
 
 # example run: python3 main.py --data_name=MNIST --model_type=SNN --model_name=FC2 --testing=False --epochs=1
 # hint for debugging: to print the values of a tensor, use tf.get_static_value(tensor_input) or also tf.keras.backend.eval(y_all)
@@ -24,6 +25,7 @@ parser.add_argument('--model_name', type=str, default='FC2', help='Should contai
 parser.add_argument('--lr', type=float, default=0.0005, help='Learning rate')
 parser.add_argument('--batch_size', type=int, default=8, help='Batch size')
 parser.add_argument('--epochs', type=int, default=10, help='Epochs. 0 -skip training')
+parser.add_argument('--layers', type=int, default=2, help='Number of layers in FC model')
 parser.add_argument('--testing', type=strtobool, default=True, help='Execute testing.')
 parser.add_argument('--load', type=str, default='False', help='Load before training. (True|False|custom_name.h5)')
 parser.add_argument('--save', type=strtobool, default=False, help='Store after training.')
@@ -64,9 +66,9 @@ model = None
 logging.info("#### Creating the model ####")
 if 'FC2' in args.model_name:
     if 'SNN' in args.model_type:
-        model = create_fc_model_SNN(layers=2, optimizer=optimizer, robustness_params=robustness_params)
+        model = create_fc_model_SNN(layers=args.layers,X_n=[5.8, 8.3, 27.4] , optimizer=optimizer, robustness_params=robustness_params)
     if 'ReLU' in args.model_type:
-        model = create_fc_model_ReLU(layers=2, optimizer=optimizer)
+        model = create_fc_model_ReLU(layers=args.layers, optimizer=optimizer)
 if 'VGG' in args.model_name:
     # We consider one architecture, a 15-layer VGG-like network.
     if 'MNIST' in args.data_name: #MNIST / FMNIST
@@ -106,18 +108,30 @@ if args.load != 'False':
     if 'SNN' in args.model_type:
         # Load X ranges
         #if os.path.exists(args.logging_dir + args.model_name + '_X_n.pkl'):
+        '''
         X_n=pkl.load(open(args.logging_dir + args.model_name + '_X_n.pkl', 'rb'))
+        if 'FC2' in args.model_name:
+            model = create_fc_model_SNN(layers=args.layers, optimizer=optimizer, X_n=X_n, robustness_params=robustness_params)
+            logging.info(f"### Create new model instance with loaded X_n = {X_n} ###\n")
         # else:
         #     X_n=1000
-        model.load_weights(args.logging_dir + args.model_name + '_preprocessed.h5', by_name=True)
+        model.load_weights(args.logging_dir + args.model_name + '_preprocessed.h5', by_name=True)'
+        '''
 
 if 'SNN' in args.model_type:
-    logging.info("#### Setting SNN intervals ####")
-    # Set parameters of SNN network: t_min_prev, t_min, t_max.
-    t_min, t_max = 0, 1  # for the input layer
-    for layer in model.layers:
+    # Register SNN intervals as model parameters to ensure model match when loading weights
+    t_min, t_max = 0, 1 
+    for n, layer in enumerate(model.layers):
         if 'conv' in layer.name or 'dense' in layer.name:
             t_min, t_max = layer.set_params(t_min, t_max)
+    print("\n\n")
+    if args.load != False:
+        print("### Loading SNN FULL weights ###")
+        model.load_weights(args.logging_dir + args.model_name + '_weights.h5', by_name=True)
+        logging.info("#### Check SNN intervals after loading ####")
+        for n, layer in enumerate(model.layers):
+            if 'conv' in layer.name or 'dense' in layer.name:
+                logging.info(f"layer_{n}: set t_min={layer.t_min}, t_max={layer.t_max}, B_n={layer.B_n}")
 
 if args.testing:
     logging.info("#### Initial test set accuracy testing ####")
@@ -125,10 +139,10 @@ if args.testing:
     logging.info("Initial testing accuracy is {}.".format(test_acc))
 
 
-logging.info("#### Attempt a single forward pass ####")
-x = data.x_train[0]
-x_expanded = tf.expand_dims(x, axis=0)
-model(x_expanded)
+# logging.info("#### Attempt a single forward pass ####")
+# x = data.x_train[0]
+# x_expanded = tf.expand_dims(x, axis=0)
+# model(x_expanded)
 
 logging.info("#### Training ####")
 history=model.fit(
@@ -146,7 +160,7 @@ if args.testing and args.epochs > 0:
     logging.info("Final testing accuracy is {}.".format(test_acc))
 
 if args.save and 'ReLU' in args.model_type:
-    logging.info("#### Saving ReLU model ####")
+    logging.info("\n\n#### Saving ReLU model ####")
     # 1. Save original ReLU weights
     model.save_weights(args.logging_dir + '/' + args.model_name + '_weights.h5')
 
@@ -162,6 +176,8 @@ if args.save and 'ReLU' in args.model_type:
     model.save_weights(args.logging_dir + '/' + args.model_name + '_preprocessed.h5')
     logging.info('saved preprocessed ReLU model')
 
+    logging.info(f"### x_train={type(data.x_train)}")
+
     # 3. Find maximum layer outputs.
     logging.info('calculating maximum layer output...')
     layer_num, X_n = 0, []
@@ -171,6 +187,7 @@ if args.save and 'ReLU' in args.model_type:
             if k!=len(model.layers)-2:
                 # Calculate X_n of the current layer.
                 layers_max.append(tf.reduce_max(tf.nn.relu(layer.output)))
+                logging.info(f"k={k} --- layers_max={layers_max}")
     extractor = tf.keras.Model(inputs=model.inputs, outputs=layers_max)
     output = extractor.predict(data.x_train, batch_size=64, verbose=1)
     X_n = list(map(lambda x: np.max(x), output))
@@ -178,11 +195,56 @@ if args.save and 'ReLU' in args.model_type:
     pkl.dump(X_n, open(args.logging_dir + '/' + args.model_name + '_X_n.pkl', 'wb'))
     logging.info('saved maximum layer output')
 
+if args.save and 'SNN' in args.model_type:
+    logging.info("\n\n#### Saving SNN model trained from scratch ####")
+    model.save_weights(args.logging_dir + '/' + args.model_name + '_weights.h5')
+
 print('### Total elapsed time [s]:', time.time() - start_time)
 print("\n")
 logging.info("#### Attempt a single forward pass ####")
 x = data.x_train[0]
 x_expanded = tf.expand_dims(x, axis=0)
 y = model(x_expanded)
+
+
+i, j = 69,200
+for n, layer in enumerate(model.layers):
+    print(f"Layer={layer.name}")
+
+    if n==1 or n == 2:
+        # filter out non-relevant spikes   
+        mask = layer.outputs < layer.t_max
+        layer_spikes = tf.boolean_mask(layer.outputs, mask)
+        
+        threshold= layer.t_max - layer.t_min - layer.D_i
+
+
+    '''
+    if 'conv' in layer.name or 'dense' in layer.name and not 'output' in layer.name:
+        print(f"    kernel.shape={layer.kernel.shape}")
+        print(f"    inputs.shape={layer.inputs.shape}")
+        print(f"    outputs.shape={layer.outputs.shape}")
+
+        
+        tj_input = layer.inputs[0][j]
+        w_ij = layer.kernel[j][i]
+        ti_output = layer.outputs[0][i]
+
+        print(f"    t_input[{j}]={tj_input}")
+        print(f"    W[{j}][{i}]={w_ij}")
+        print(f"    ti_ouput[{i}]={ti_output}")
+        print(f"    layer_tmax={layer.t_max}")
+    
+        j = i
+    '''
+
 print(y)
 print(data.y_train[0])
+
+
+
+if 'SNN' in args.model_type:
+    logging.info("### Printing layer intervals AFTER training ###")
+    for n, layer in enumerate(model.layers):
+        if 'conv' in layer.name or 'dense' in layer.name:
+            logging.info(f"layer_{n}: t_min={layer.t_min}, t_max={layer.t_max}, B_n={layer.B_n}")
