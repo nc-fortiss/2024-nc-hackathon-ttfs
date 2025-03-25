@@ -90,7 +90,7 @@ plt.show()
 model = None 
 if 'SNN' in args.model_type:
     config_utils.logging.info("### Create instance of FC_SNN: ###\n")
-    model = create_torch_fc_model_SNN(layers=args.layers, robustness_params=robustness_params)
+    model = create_torch_fc_model_SNN(X_n=10, layers=args.layers, robustness_params=robustness_params)
 elif 'ReLU' in args.model_type: 
     config_utils.logging.info("### Create instance of FC_ReLU: ###\n")
     model = create_torch_fc_model_ReLU(layers=args.layers)
@@ -102,30 +102,53 @@ if model is None:
 print(model)
 print("\n") 
 
+''' Load pre-trained weights as needed '''
+if args.load == True:
+    config_utils.logging.info("#### Loading weights ####")
+    if 'ReLU' in args.model_type:
+        # Load weights
+        if args.load == 'True':  # automatic name
+            model.load_weights(args.logging_dir + args.model_name + '_weights.h5', by_name=True)
+        else:  # custom name
+            model.load_weights(args.logging_dir + args.load, by_name=True)
+    if 'SNN' in args.model_type:
+        # Load X ranges
+        #if os.path.exists(args.logging_dir + args.model_name + '_X_n.pkl'):
+        '''
+        X_n=pkl.load(open(args.logging_dir + args.model_name + '_X_n.pkl', 'rb'))
+        if 'FC2' in args.model_name:
+            model = create_fc_model_SNN(layers=args.layers, optimizer=optimizer, X_n=X_n, robustness_params=robustness_params)
+            logging.info(f"### Create new model instance with loaded X_n = {X_n} ###\n")
+        # else:
+        #     X_n=1000
+        model.load_weights(args.logging_dir + args.model_name + '_preprocessed.h5', by_name=True)'
+        '''
+        # TODO: understand if it makes sense to save and load the full SNN weights ( - test accuracy drops immediately after loading)
+        print("### Loading pre-trained weights ###")
+        load_path = args.logging_dir + 'model/full_snn_weights.pth'
+        model.load_state_dict(torch.load(load_path, weights_only=True))
+
 ''' Iterate over each hidden layer, plus the output layer, 
     and set the SNN interval time boundaries for each one. '''
 
 if 'SNN' in args.model_type:
     config_utils.logging.info("### Setting SNNS intervals ####")
     model.set_snn_intervals(0,1)
-
-
-    '''
     t_min, t_max = 0, 1  
     layer_num = 0
     for child in model.children():
-            config_utils.logging.info(child)
-            
-            if isinstance(child, nn.ModuleList):    # the hidden layers appear under a single child node as a moduleList
-                for layer in child: 
-                    t_min, t_max = layer.set_intervals(t_min, t_max)
-                    config_utils.logging.info(f"layer_num={layer_num} -> B_n = {layer.B_n}; t_min_prev={layer.t_min_prev}; t_min={layer.t_min}; t_max={layer.t_max}\n")
-                    layer_num += 1
-            else: 
-                t_min, t_max = child.set_intervals(t_min,t_max)    # for the output layer 
-                config_utils.logging.info(f"layer_num={layer_num} -> B_n = {child.B_n}; t_min_prev={child.t_min_prev}; t_min={child.t_min}; t_max={child.t_max}\n")
-                layer_num+=1 
-    '''
+        config_utils.logging.info(child)
+        
+        if isinstance(child, nn.ModuleList):    # the hidden layers appear under a single child node as a moduleList
+            for layer in child: 
+                t_min, t_max = layer.set_intervals(t_min, t_max)
+                config_utils.logging.info(f"layer_num={layer_num} -> B_n = {layer.B_n}; t_min_prev={layer.t_min_prev}; t_min={layer.t_min}; t_max={layer.t_max}\n")
+                layer_num += 1
+        else: 
+            t_min, t_max = child.set_intervals(t_min,t_max)    # for the output layer 
+            config_utils.logging.info(f"layer_num={layer_num} -> B_n = {child.B_n}; t_min_prev={child.t_min_prev}; t_min={child.t_min}; t_max={child.t_max}\n")
+            layer_num+=1 
+
 ''' Make a forward pass pre-training'''
 config_utils.logging.info("--- Attempt forward pass ---")
 model.eval()
@@ -133,19 +156,22 @@ tuple = dataset.train_set.__getitem__(0)
 x = tuple[0]
 config_utils.logging.info(f"Shape of input x: {(x.shape)}")
 y = model(x)
-config_utils.logging.info(f"Model output: {y}")
+config_utils.logging.info(f"Model output: {y}")#
+
 
 ''' Make a test run on testset pre-training '''
 if args.testing == True:
     config_utils.logging.info("--- Evaluating model on testset with no training ---")
     evaluate_FC_SNN(model, dataset.test_load)
 
-''' Load pre-trained weights as needed '''
-if args.load == True:
-    # TODO: understand if it makes sense to save and load the full SNN weights ( - test accuracy drops immediately after loading)
-    print("### Loading pre-trained weights ###")
-    load_path = args.logging_dir + 'model/full_snn_weights.pth'
-    model.load_state_dict(torch.load(load_path, weights_only=True))
+
+''' print t_min and t_max layer-wise BEFORE training '''
+if 'SNN' in args.model_type:
+    config_utils.logging.info("\n### Get layer time intervals BEFORE training ###")
+    for n, layer in enumerate(model.hidden_layers):
+        config_utils.logging.info(f"hidden_layer_{n}: t_min={layer.t_min}, t_max={layer.t_max}")
+    config_utils.logging.info(f"output_layer: t_min={model.output_layer.t_min}, t_max={model.output_layer.t_max}\n")
+
 
 ''' Start training loop '''
 if args.epochs > 0:
@@ -164,10 +190,23 @@ if args.epochs > 0:
 
 ''' Save model weights post-training'''
 if args.save == True:
-    # save the SNN when trained fully from scratch to avoid re-training (this is NOT the ANN-SNN conversion step)
-    save_path = args.logging_dir + 'model/full_snn_weights.pth'
-    config_utils.logging.info(f"Saving model post-training to {save_path}")
-    torch.save(model.state_dict(), save_path)   # save weights as dict rather than the entire model
+    if 'ReLU' in args.model_type:
+        config_utils.logging.info("\n\n#### Saving ReLU model ####")
+        # Save raw weights
+        save_path = args.logging_dir + '/' + args.model_name + '_weights/.pth'
+        
+
+
+    elif 'SNN' in args.model_type:
+        # save the SNN when trained fully from scratch to avoid re-training (this is NOT the ANN-SNN conversion step)
+        save_path = args.logging_dir + 'model/full_snn_weights.pth'
+        config_utils.logging.info(f"Saving model post-training to {save_path}")
+        torch.save(model.state_dict(), save_path)   # save weights as dict rather than the entire model
+
+config_utils.logging.info("\n### Get layer time intervals AFTER training ###")
+for n, layer in enumerate(model.hidden_layers):
+    config_utils.logging.info(f"layer_{n}: t_min={layer.t_min}, t_max={layer.t_max}")
+config_utils.logging.info(f"output_layer: t_min={model.output_layer.t_min}, t_max={model.output_layer.t_max}\n")
 
 ''' Make another forward pass post-training, log the input spike times and plot them '''
 config_utils.logging.info("\n\n\n--- Attempt another forward pass ---\n")
