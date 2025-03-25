@@ -41,6 +41,7 @@ class SpikingDense(tf.keras.layers.Layer):
         """
         Input spiking times tj, output spiking times ti or the value of membrane potential in case of output layer. 
         """
+        print(f"### Calling forward pass for layer={self.name}")
         output = call_spiking(tj, self.kernel, self.D_i, self.t_min_prev, self.t_min, self.t_max, self.robustness_params)
         # In case of the output layer a simple integration is applied without spiking. 
         if self.outputLayer:
@@ -48,6 +49,8 @@ class SpikingDense(tf.keras.layers.Layer):
             W_mult_x = tf.matmul(self.t_min-tj, self.kernel)
             self.alpha = self.D_i/(self.t_min-self.t_min_prev)
             output = self.alpha * (self.t_min - self.t_min_prev) + W_mult_x
+        self.inputs = tj
+        self.outputs = output    
         return output
     
     
@@ -146,12 +149,20 @@ class ModelTmax(tf.keras.Model):
         trainable_vars = self.trainable_variables
         gradients = tape.gradient(loss, trainable_vars)
         self.optimizer.apply_gradients(zip(gradients, trainable_vars))
+
+        # breakpoint()
+
         t_min_prev, t_min, k=0.0, 1.0, 0
         for layer in self.layers:
+            # print(f"--- k={k}")
+            # breakpoint()
             if 'conv' in layer.name or 'dense' in layer.name: 
                 try:
                     t_max=t_min + tf.maximum(tf.cast(layer.t_max-layer.t_min, dtype=tf.float64), 10.0*(layer.t_max-tf.reduce_min(y_pred_all[1][k])))
+                    # print("y_pred_all=",y_pred_all[1])
+                    # print(f"!!! t_max={layer.t_max}, t_min={layer.t_min}, t_max-t_min={tf.cast(layer.t_max-layer.t_min, dtype=tf.float64)}, else={10.0*(layer.t_max-tf.reduce_min(y_pred_all[1][k]))} --- t_min_coll={tf.reduce_min(y_pred_all[1][k])}")
                 except IndexError:
+                    # print("!!! IndexError !!!")
                     t_max=0
                 layer.t_min_prev.assign(t_min_prev)
                 layer.t_min.assign(t_min)
@@ -161,7 +172,7 @@ class ModelTmax(tf.keras.Model):
                 k+=1
         self.compiled_metrics.update_state(y_all, y_pred_all[0])
         return {m.name: m.result() for m in self.metrics}
-    
+     
     def test_step(self, data):
         x, y_all = data
         y_pred_all = self(x, training=False)  
@@ -298,6 +309,10 @@ def create_fc_model_SNN(layers, optimizer, X_n=1000, robustness_params={}, N_hid
     outputs = SpikingDense(N_out, 'dense_output', outputLayer=True, robustness_params=robustness_params)(ti)
     model = ModelTmax (inputs=tj, outputs=[outputs, min_ti])
     model.compile(metrics=['accuracy'], loss=tf.keras.losses.CategoricalCrossentropy(from_logits=True), optimizer=optimizer)
+
+    logging.info(f"### min_ti = {min_ti}")
+
+
     return model
 
 
@@ -319,14 +334,17 @@ def call_spiking(tj, W, D_i, t_min_prev, t_min, t_max, robustness_params):
     threshold = t_max - t_min - D_i
 
     #### For debugging only ####
+
+
     
     # breakpoint()
-    # print("call spiking")
+    #print("call spiking")
     # print("t_min=", t_min)
     # print("t_max=", t_max)
-    # print(tf.get_static_value(tj))
+    # print("Input tj=", tf.get_static_value(tj))
     # print("D_i=", tf.get_static_value(D_i))
     # print("threshold= ",tf.get_static_value(threshold))
+    # print("Weight W=", tf.get_static_value(W))
     
     # Calculate output spiking time ti (Eq. 7)
     ti = (tf.matmul(tj-t_min, W) + threshold + t_min)
@@ -335,5 +353,8 @@ def call_spiking(tj, W, D_i, t_min_prev, t_min, t_max, robustness_params):
     ti = tf.where(ti < t_max, ti, t_max)
     # Add noise to the spiking time for noise simulations
     ti = ti + tf.random.normal(tf.shape(ti), stddev=robustness_params['noise'], dtype=tf.dtypes.float64)
+
+    # print("Output ti=", tf.get_static_value(ti))
+
     return ti
 

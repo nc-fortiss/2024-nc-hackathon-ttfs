@@ -150,16 +150,21 @@ class FC_ReLU_torch(nn.Module):
             self.hidden_layers.append(nn.Linear(self.N(i+2), self.N(i+2), dtype=torch.float64)) 
 
         # Add output layer separately
-        self.output_layer = nn.Linear(self.N(self.N_layers), self.N_out, dtype=torch.float64)
+        # self.output_layer = nn.Linear(self.N(self.N_layers), self.N_out, dtype=torch.float64)
+        # TODO: choose if to keep the output layer separate from the list (might be possible to be intetgrated)
+        self.hidden_layers.append(nn.Linear(self.N(layers), self.N_out, dtype=torch.float64))
 
+        self.relu = nn.ReLU()
 
     def forward(self,x):
         # Skip ReLU on the output layer
+
         for layer in self.hidden_layers[:-1]:
-            x = F.relu(layer(x))
+            x = self.relu(layer(x))
 
         # pass the logits from penultimate hidden layer to output layer
-        x = self.output_layer(x)
+        # x = self.output_layer(x)
+        x = self.hidden_layers[self.N_layers-1](x)
         return x
     
     def fit(self,train_data, optimizer,loss_criterion,epochs=5):
