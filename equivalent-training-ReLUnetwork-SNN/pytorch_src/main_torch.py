@@ -6,13 +6,15 @@ from model_torch import *
 import torch
 from torch import nn
 import matplotlib.pyplot as plt
+import pickle as pkl
 import pdb
+import os 
 
 
 override = None       # hard-code args parameters instead of passing them over the CLI
 
 # Example run scripts, useful for testing 
-# Train FC ReLU only:                           python3 main_torch.py --data_name=MNIST --model_type=ReLU --model_name=FC2
+# Train FC ReLU only:                           python3 main_torch.py --data_name=MNIST --model_type=ReLU --model_name=FC2 --epochs=1
 # Train FC SNN only (no conversion):            python3 main_torch.py --data_name=MNIST --model_type=SNN --model_name=FC2 --epochs=5
 # Fine-tune SNN on ANN weights, evaluate test:  python3 main_torch.py --data_name=MNIST --model_type=SNN --model_name=FC2 --load=True --testing=True --epochs=0
 #
@@ -28,6 +30,7 @@ parser.add_argument('--logging_dir', type=str, default='./logs/', help='Director
 parser.add_argument('--model_type', type=str, default='SNN', help='(SNN|ReLU)')                                             # choose between SNN and ReLU                              
 parser.add_argument('--model_name', type=str, default='FC2', help='Should contain (FC2|VGG[BN]): e.g. VGG_BN_test1')
 parser.add_argument('--layers', type=int, default='2', help='number of layers for a FC model')
+parser.add_argument('--train_shift', type=strtobool, default=True, help='Re-calculate interval boundaries during training.')
 
 # Hyperparameters
 parser.add_argument('--lr', type=float, default=0.0005, help='Learning rate')
@@ -54,12 +57,13 @@ if(len(args[1])>0):
     print("Warning: Ignored args", args[1])
 print("Argument parameters: \n", args[0])
 args = args[0]
-
+print(args)
 
 ''' 
     Instantiate objects with given parameters 
 '''
 args.model_name = args.data_name + '-' + args.model_name
+config_utils.TRAIN_SHIFT = args.train_shift
 config_utils.set_up_logging(args.logging_dir, args.model_name)
 robustness_params={
     'noise':args.noise,
@@ -78,13 +82,6 @@ dataset = Dataset_Torch(
     ttfs_noise=args.noise,
 )
 
-fig, ax = plt.subplots(figsize=(9, 10))
-first_tensor = dataset.train_set[0][0]
-first_tensor = torch.reshape(first_tensor, (28,28))
-im = ax.imshow(first_tensor, cmap='gray_r')
-cbar = fig.colorbar(im, ax=ax)
-plt.show()
-
 ''' Instantiate model '''
 
 model = None 
@@ -102,9 +99,10 @@ if model is None:
 print(model)
 print("\n") 
 
-''' Load pre-trained weights as needed '''
-if args.load == True:
-    config_utils.logging.info("#### Loading weights ####")
+
+''' Load pre-trained weights as needed (pass --load=True or --load==custom_name)'''
+if args.load != 'False':
+    config_utils.logging.info("### Loading weights ###")
     if 'ReLU' in args.model_type:
         # Load weights
         if args.load == 'True':  # automatic name
@@ -112,42 +110,32 @@ if args.load == True:
         else:  # custom name
             model.load_weights(args.logging_dir + args.load, by_name=True)
     if 'SNN' in args.model_type:
-        # Load X ranges
-        #if os.path.exists(args.logging_dir + args.model_name + '_X_n.pkl'):
-        '''
-        X_n=pkl.load(open(args.logging_dir + args.model_name + '_X_n.pkl', 'rb'))
+        # Load X_n ranges from pre-trained ANN, if available
+        if os.path.exists(args.logging_dir + args.model_name + '_X_n.pkl'):
+            X_n = pkl.load(open(args.logging_dir + args.model_name + '_X_n.pkl', 'rb'))
+        else:
+            X_n = [5.8, 8.3, 27.4] 
         if 'FC2' in args.model_name:
-            model = create_fc_model_SNN(layers=args.layers, optimizer=optimizer, X_n=X_n, robustness_params=robustness_params)
-            logging.info(f"### Create new model instance with loaded X_n = {X_n} ###\n")
-        # else:
-        #     X_n=1000
-        model.load_weights(args.logging_dir + args.model_name + '_preprocessed.h5', by_name=True)'
-        '''
-        # TODO: understand if it makes sense to save and load the full SNN weights ( - test accuracy drops immediately after loading)
-        print("### Loading pre-trained weights ###")
-        load_path = args.logging_dir + 'model/full_snn_weights.pth'
-        model.load_state_dict(torch.load(load_path, weights_only=True))
+            config_utils.logging.info(f"### Create new SNN model instance with loaded X_n = {X_n} ###\n")
+            model = create_torch_fc_model_SNN(X_n=X_n, layers=args.layers, robustness_params=robustness_params)
 
+        # After creating model instance with new X_n ranges, load the weights
+        load_path = args.logging_dir + args.model_name + '_weights.pth'
+        config_utils.load_ANN_weights(model, load_path)
+
+
+    
 ''' Iterate over each hidden layer, plus the output layer, 
     and set the SNN interval time boundaries for each one. '''
 
 if 'SNN' in args.model_type:
-    config_utils.logging.info("### Setting SNNS intervals ####")
+    config_utils.logging.info("### Setting SNN intervals ####")
     model.set_snn_intervals(0,1)
-    t_min, t_max = 0, 1  
-    layer_num = 0
-    for child in model.children():
-        config_utils.logging.info(child)
-        
-        if isinstance(child, nn.ModuleList):    # the hidden layers appear under a single child node as a moduleList
-            for layer in child: 
-                t_min, t_max = layer.set_intervals(t_min, t_max)
-                config_utils.logging.info(f"layer_num={layer_num} -> B_n = {layer.B_n}; t_min_prev={layer.t_min_prev}; t_min={layer.t_min}; t_max={layer.t_max}\n")
-                layer_num += 1
-        else: 
-            t_min, t_max = child.set_intervals(t_min,t_max)    # for the output layer 
-            config_utils.logging.info(f"layer_num={layer_num} -> B_n = {child.B_n}; t_min_prev={child.t_min_prev}; t_min={child.t_min}; t_max={child.t_max}\n")
-            layer_num+=1 
+
+    config_utils.logging.info("### Print layer interval boundaries BEFORE training ###")
+    for n, layer in enumerate(model.hidden_layers):
+        config_utils.logging.info(f"layer_{n}: t_min={layer.t_min}, t_max={layer.t_max}")
+    config_utils.logging.info(f"output_layer: t_min={model.output_layer.t_min}, t_max={model.output_layer.t_max}\n")
 
 ''' Make a forward pass pre-training'''
 config_utils.logging.info("--- Attempt forward pass ---")
@@ -161,16 +149,8 @@ config_utils.logging.info(f"Model output: {y}")#
 
 ''' Make a test run on testset pre-training '''
 if args.testing == True:
-    config_utils.logging.info("--- Evaluating model on testset with no training ---")
+    config_utils.logging.info("\n--- Evaluating model on testset before training // fine-tuning ---")
     evaluate_FC_SNN(model, dataset.test_load)
-
-
-''' print t_min and t_max layer-wise BEFORE training '''
-if 'SNN' in args.model_type:
-    config_utils.logging.info("\n### Get layer time intervals BEFORE training ###")
-    for n, layer in enumerate(model.hidden_layers):
-        config_utils.logging.info(f"hidden_layer_{n}: t_min={layer.t_min}, t_max={layer.t_max}")
-    config_utils.logging.info(f"output_layer: t_min={model.output_layer.t_min}, t_max={model.output_layer.t_max}\n")
 
 
 ''' Start training loop '''
@@ -184,29 +164,33 @@ if args.epochs > 0:
     train_FC_SNN(model, dataset.train_load, args.epochs, optimizer=optimizer, scheduler=scheduler)
     config_utils.logging.info("--- Finished training the model ---")
 
-    config_utils.logging.info("--- Evaluating model on testset ---")
-    evaluate_FC_SNN(model, dataset.test_load)
-
-
+if args.testing and args.epochs > 0:
+    config_utils.logging.info("### Final test set accuracy (after training / fine-tuning) ###")
+    evaluate_FC_SNN(model, dataset.test_load)    
+    
 ''' Save model weights post-training'''
 if args.save == True:
     if 'ReLU' in args.model_type:
         config_utils.logging.info("\n\n#### Saving ReLU model ####")
-        # Save raw weights
-        save_path = args.logging_dir + '/' + args.model_name + '_weights/.pth'
-        
+        # Save raw ANN weights (these can be used only for new ANN instances)
+        save_path = args.logging_dir + args.model_name + '_weights.pth'
+        torch.save(model.state_dict(), save_path) 
+
+        # Preprocess ANN weights so that they can be used for the SNN conversion
+        # TODO ? 
 
 
-    elif 'SNN' in args.model_type:
+    if 'SNN' in args.model_type:
         # save the SNN when trained fully from scratch to avoid re-training (this is NOT the ANN-SNN conversion step)
         save_path = args.logging_dir + 'model/full_snn_weights.pth'
         config_utils.logging.info(f"Saving model post-training to {save_path}")
         torch.save(model.state_dict(), save_path)   # save weights as dict rather than the entire model
 
-config_utils.logging.info("\n### Get layer time intervals AFTER training ###")
-for n, layer in enumerate(model.hidden_layers):
-    config_utils.logging.info(f"layer_{n}: t_min={layer.t_min}, t_max={layer.t_max}")
-config_utils.logging.info(f"output_layer: t_min={model.output_layer.t_min}, t_max={model.output_layer.t_max}\n")
+if 'SNN' in args.model_type:
+    config_utils.logging.info("\n### Get layer time intervals AFTER training ###")
+    for n, layer in enumerate(model.hidden_layers):
+        config_utils.logging.info(f"layer_{n}: t_min={layer.t_min}, t_max={layer.t_max}")
+    config_utils.logging.info(f"output_layer: t_min={model.output_layer.t_min}, t_max={model.output_layer.t_max}\n")
 
 ''' Make another forward pass post-training, log the input spike times and plot them '''
 config_utils.logging.info("\n\n\n--- Attempt another forward pass ---\n")
@@ -220,11 +204,3 @@ y = model(x)
 config_utils.logging.info(f"Model output: {y}")
 config_utils.plot_input_spikes()
 config_utils.DEBUG_MODE = False 
-
-''' Evaluate the model on testset post-training '''
-if args.testing == True:
-    config_utils.logging.info("--- Evaluating model on testset post-training ---")
-    evaluate_FC_SNN(model, dataset.test_load)
-
-
-

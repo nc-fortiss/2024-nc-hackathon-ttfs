@@ -2,14 +2,15 @@ import os
 import logging 
 import sys
 import matplotlib.pyplot as plt
-
+import torch
 
 '''
     Module containing global configuration settings and logging / utility functions
 '''
 
 
-DEBUG_MODE = False
+DEBUG_MODE = False      # save further logging info for debugging if True
+TRAIN_SHIFT = True      # re-train the SNN interval boundaries if True
 LOGGING_DIR = ''
 
 def set_up_logging(logging_dir, model_name):
@@ -40,6 +41,68 @@ def clean_spike_logs():
             os.remove(file_path)  
             logging.info(f"### Removed {file_path} ###")
 
+def load_ANN_weights(snn_model, load_path):
+    '''
+        Load the trained ANN weights into an SNN instance.
+        Since the model definitions are different (in particular the names for the layers and the weigths), 
+        the loading requires manual adjustment; the standard model.load_weights() from torch cannot be used.
+
+        @snn_model: a new SNN model instance
+        @load_path: path to the .pth file with the ANN weights
+    '''
+    # Adapted from: https://discuss.pytorch.org/t/loading-weights-from-pretrained-model-with-different-module-names/11841/3 (Accessed 27/03/2025)
+    ann_state_dict = torch.load(load_path)
+    snn_state_dict = snn_model.state_dict()
+
+    layer=0
+    for k,v in ann_state_dict.items():
+        if 'weight' in k:
+            layer_weight_key = f"output_layer.kernel" if layer == (snn_model.N_layers-1) else f"hidden_layers.{layer}.kernel"
+            ANN_weights_tensor = v.T        # re-shape tensor to match SNN weights shapes
+            snn_state_dict[layer_weight_key] = ANN_weights_tensor
+            layer += 1
+
+    # After collecting all the weights into the state_dict, load it into the SNN model
+    snn_model.load_state_dict(snn_state_dict)
+
+    ''' ### PLOT THE LOADED WEIGHTS
+    layer_weights = []
+    layer_names = []
+
+    # Collect weights from each layer
+    for name, param in snn_model.named_parameters():
+        if 'weight' in name or 'kernel' in name:  # SNNs might use 'kernel'
+            layer_weights.append(param.data.cpu().numpy().flatten())
+            layer_names.append(name)
+
+
+    plt.figure(figsize=(12, 6))
+    for weights, name in zip(layer_weights, layer_names):
+        plt.hist(weights, bins=100, alpha=0.5, label=name)
+
+
+    plt.title("Weight Histograms per Layer")
+    plt.xlabel("Weight Value")
+    plt.ylabel("Frequency")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+    '''
+
+
+
+
+
+def preprocess_relu(model):
+    '''
+        Preprocesses the pre-trained ReLU instance so that its weights 
+        can be loaded into an SNN model instance (for further fine-tuning)
+    
+        @model: FC_ReLU_torch instance (trained)
+    '''
+
+    return 0
 
 def plot_input_spikes():
     ''' Make a histogram plot to visualize the distribution of the input spike times layer-wise
@@ -73,6 +136,3 @@ def plot_input_spikes():
 
     # plt.xlim(left = 0)
     plt.show()
-
-
-    return 0
