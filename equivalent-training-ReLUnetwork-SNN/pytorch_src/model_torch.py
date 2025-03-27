@@ -79,7 +79,7 @@ class SpikingDenseTorch(nn.Module):
             init.xavier_uniform_(self.kernel)           # initialize weight tensor, with initializer if provided
 
         self.D_i = nn.Parameter(torch.zeros(N_out))
-        
+
     def set_intervals(self, t_min_prev,t_min):
         ''' Sets t_min_prev, t_min, and t_max for this layer. The bounds are determined and set 
             before training even begins. Equivalent to 'set_params' in the tensorflow code. 
@@ -127,7 +127,8 @@ class FC_ReLU_torch(nn.Module):
         N_in, N_out: number of neurons at the input / output layers
         N: returns N_hid[l] if N_hid is a list, else returns the constant N_hid value
         hidden_layers: list of torch.nn modules ()
-        # TODO: input_layer, output_layer:
+        relu: torch definition of the relu activation function
+        max_activations: tracks the global maximzum output activation values for each layer in a list
     ''' 
     def __init__(self, layers, N_hid,N_in, N_out):
         super().__init__()
@@ -154,7 +155,14 @@ class FC_ReLU_torch(nn.Module):
         # TODO: choose if to keep the output layer separate from the list (might be possible to be intetgrated)
         self.hidden_layers.append(nn.Linear(self.N(layers), self.N_out, dtype=torch.float64))
 
+        # Add relu definition
         self.relu = nn.ReLU()
+
+        # Register forward hooks on each hidden layer
+        self.max_activations = {}
+        for i, layer in enumerate(self.hidden_layers[:-1]):
+           layer_name = f"layer_{i}"
+           layer.register_forward_hook(self.get_max_activation(layer_name))
 
     def forward(self,x):
         # Skip ReLU on the output layer
@@ -163,7 +171,6 @@ class FC_ReLU_torch(nn.Module):
             x = self.relu(layer(x))
 
         # pass the logits from penultimate hidden layer to output layer
-        # x = self.output_layer(x)
         x = self.hidden_layers[self.N_layers-1](x)
         return x
     
@@ -201,6 +208,27 @@ class FC_ReLU_torch(nn.Module):
                     running_loss = 0.0
 
         print('Finished Training')
+
+    def get_max_activation(self, name):
+        '''
+            Returns the maximum activation for a single layer during a forward pass.
+            The max is updated for each individual batch (at each forward call). 
+            Therefore, when predicting with a dataset, model.max_activations will store
+            the maximum activation value across all batches in the training set.
+
+            Function implementation also adapted from: https://web.stanford.edu/~nanbhas/blog/forward-hooks-pytorch/#using-the-forward-hooks (Accessed 27/03/25)
+
+            @name: string, name of the layer
+        '''
+        def hook(model, input, output):
+            relu_output = F.relu(output)
+            batch_max = torch.max(relu_output).item()
+            if name not in self.max_activations:
+                self.max_activations[name] = batch_max
+            else:
+                self.max_activations[name] = max(self.max_activations[name], batch_max)
+
+        return hook
 
 class FC_SNN_torch(nn.Module):
     ''' Defines instance of a fully-connected SNN model
@@ -242,6 +270,7 @@ class FC_SNN_torch(nn.Module):
         # self.list_activations = nn.Parameter
         self.list_activations = [ [] for _ in range(len(self.hidden_layers))]
 
+
         # Register hooks to capture activations
         # self.activations = {f"layer_{i}": [] for i in range(len(self.hidden_layers))}
         # for i, layer in enumerate(self.hidden_layers):
@@ -250,8 +279,6 @@ class FC_SNN_torch(nn.Module):
     def forward(self, x):
         ''' Defines the forward pass through the entire SNN architecture '''
 
-        # Store the activations for this current batch
-        # activations_dict = {} 
         for i, l in enumerate(self.hidden_layers):
             x = l(x)
 
@@ -259,13 +286,13 @@ class FC_SNN_torch(nn.Module):
             ''' use: self.layer_activations[i] = np.append(self.layer_activations[i], x.flatten().detach().numpy()) '''
             # self.list_activations[i].extend(x.flatten().detach().tolist())
 
+            # If DEBUG_MODE enabled log activations and further data
             if config_utils.DEBUG_MODE:
                 self.layer_activations[i] = np.append(self.layer_activations[i], x.flatten().detach().numpy())
                 self.list_activations[i].extend(x.flatten().detach().tolist())
-                # activations_dict[f"layer_{i}"] = x.detach().cpu().numpy() 
 
-        # save_path = config_utils.LOGGING_DIR + 'activations.npz'
-        # np.savez(save_path, **activations_dict)
+
+
         x = self.output_layer(x)
         return x 
     
@@ -276,16 +303,13 @@ class FC_SNN_torch(nn.Module):
         '''
         t_min, t_max= t_min_start, t_max_start
         layer_num = 0
-        config_utils.logging.info("\n")
         for child in self.children():
             if isinstance(child, nn.ModuleList):    # the hidden layers appear under a single child node as a moduleList
                 for layer in child: 
                     t_min, t_max = layer.set_intervals(t_min, t_max)
-                    config_utils.logging.info(f"    hidden layer_num={layer_num} -> B_n = {layer.B_n:>7.2f}; t_min_prev={layer.t_min_prev:>7.2f};   t_min={layer.t_min:>7.2f}; t_max={layer.t_max:>7.2f}")
                     layer_num += 1
             else: 
                 t_min, t_max = child.set_intervals(t_min,t_max)    # for the output layer 
-                config_utils.logging.info(f"    output layer_num={layer_num} -> B_n = {child.B_n:>7.2f}; t_min_prev={child.t_min_prev:>7.2f};   t_min={child.t_min:>7.2f}; t_max={child.t_max:>7.2f}\n")
                 layer_num+=1 
 
     def _create_hook_fn(self, layer_name):

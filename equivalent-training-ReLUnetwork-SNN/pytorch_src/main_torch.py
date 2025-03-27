@@ -57,7 +57,6 @@ if(len(args[1])>0):
     print("Warning: Ignored args", args[1])
 print("Argument parameters: \n", args[0])
 args = args[0]
-print(args)
 
 ''' 
     Instantiate objects with given parameters 
@@ -114,7 +113,7 @@ if args.load != 'False':
         if os.path.exists(args.logging_dir + args.model_name + '_X_n.pkl'):
             X_n = pkl.load(open(args.logging_dir + args.model_name + '_X_n.pkl', 'rb'))
         else:
-            X_n = [5.8, 8.3, 27.4] 
+            X_n = [10,50] 
         if 'FC2' in args.model_name:
             config_utils.logging.info(f"### Create new SNN model instance with loaded X_n = {X_n} ###\n")
             model = create_torch_fc_model_SNN(X_n=X_n, layers=args.layers, robustness_params=robustness_params)
@@ -179,6 +178,10 @@ if args.save == True:
         # Preprocess ANN weights so that they can be used for the SNN conversion
         # TODO ? 
 
+        # Save the optimal X_n ranges as the maximum ReLU activations
+        config_utils.logging.info(f"### Maximum layer-wise ReLU activations: {model.max_activations}")
+        X_n_list = [v for v in model.max_activations.values()]
+        pkl.dump(X_n_list, open(args.logging_dir + '/' + args.model_name + '_X_n.pkl', 'wb'))
 
     if 'SNN' in args.model_type:
         # save the SNN when trained fully from scratch to avoid re-training (this is NOT the ANN-SNN conversion step)
