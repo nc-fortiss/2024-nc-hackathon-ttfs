@@ -5,3 +5,4 @@ datasets/
 __pycache__/
 *.pyc
 *.pyo
+experiments.py

@@ -5,7 +5,7 @@ from tensorflow.keras.layers import Conv2D, Input, Dense, MaxPool2D, Flatten, Dr
 from tensorflow.keras.models import Model
 from utils import *
 tf.keras.backend.set_floatx('float64')
-
+import utils
 
 class SpikingDense(tf.keras.layers.Layer):
     def __init__(self, units, name, X_n=1, outputLayer=False, robustness_params={}, input_dim=None,
@@ -41,7 +41,7 @@ class SpikingDense(tf.keras.layers.Layer):
         """
         Input spiking times tj, output spiking times ti or the value of membrane potential in case of output layer. 
         """
-        print(f"### Calling forward pass for layer={self.name}")
+        # print(f"### Calling forward pass for layer={self.name}")
         output = call_spiking(tj, self.kernel, self.D_i, self.t_min_prev, self.t_min, self.t_max, self.robustness_params)
         # In case of the output layer a simple integration is applied without spiking. 
         if self.outputLayer:
@@ -144,32 +144,41 @@ class ModelTmax(tf.keras.Model):
         # breakpoint()
         x, y_all = data
         with tf.GradientTape() as tape:
-            y_pred_all = self(x, training=False) 
+            y_pred_all = self(x, training=False)        # call to model will return a list: y_pred_all[0] for the output logits; y_pred_all[1] for the min_ti list 
             loss = self.compiled_loss(y_all, y_pred_all[0], regularization_losses=self.losses)
         trainable_vars = self.trainable_variables
         gradients = tape.gradient(loss, trainable_vars)
         self.optimizer.apply_gradients(zip(gradients, trainable_vars))
 
-        # breakpoint()
+        if utils.TRAIN_SHIFT: 
+            t_min_prev, t_min, k=0.0, 1.0, 0
+            for layer in self.layers:
+                # print(f"--- k={k}")
+                # breakpoint()
+                # Iterate over each layer
+                if 'conv' in layer.name or 'dense' in layer.name: 
+                    try:
 
-        t_min_prev, t_min, k=0.0, 1.0, 0
-        for layer in self.layers:
-            # print(f"--- k={k}")
-            # breakpoint()
-            if 'conv' in layer.name or 'dense' in layer.name: 
-                try:
-                    t_max=t_min + tf.maximum(tf.cast(layer.t_max-layer.t_min, dtype=tf.float64), 10.0*(layer.t_max-tf.reduce_min(y_pred_all[1][k])))
-                    # print("y_pred_all=",y_pred_all[1])
-                    # print(f"!!! t_max={layer.t_max}, t_min={layer.t_min}, t_max-t_min={tf.cast(layer.t_max-layer.t_min, dtype=tf.float64)}, else={10.0*(layer.t_max-tf.reduce_min(y_pred_all[1][k]))} --- t_min_coll={tf.reduce_min(y_pred_all[1][k])}")
-                except IndexError:
-                    # print("!!! IndexError !!!")
-                    t_max=0
-                layer.t_min_prev.assign(t_min_prev)
-                layer.t_min.assign(t_min)
-                layer.t_max.assign(t_max)
-                t_min_prev, t_min = t_min, t_max
-                if k==len(y_pred_all[1]): break
-                k+=1
+                        t_max=t_min + tf.maximum(tf.cast(layer.t_max-layer.t_min, dtype=tf.float64), 5.0*(layer.t_max-tf.reduce_min(y_pred_all[1][k])))
+                        # print("y_pred_all=",y_pred_all[1])
+                        # print(f"!!! t_max={layer.t_max}, t_min={layer.t_min}, t_max-t_min={tf.cast(layer.t_max-layer.t_min, dtype=tf.float64)}, else={10.0*(layer.t_max-tf.reduce_min(y_pred_all[1][k]))} --- t_min_coll={tf.reduce_min(y_pred_all[1][k])}")
+                    except IndexError:
+                        # print("!!! IndexError !!!")
+                        t_max=0
+                    layer.t_min_prev.assign(t_min_prev)
+                    layer.t_min.assign(t_min)
+                    layer.t_max.assign(t_max)
+                    t_min_prev, t_min = t_min, t_max
+                    if k==len(y_pred_all[1]): break
+                    k+=1
+
+                    debug_path = f"{utils.LOGGING_DIR}/debug_tmax_{k}.txt"
+                    with open(debug_path, 'a+') as f:
+                        
+                        f.write(str(np.round(tf.get_static_value(t_max),2)))
+                        f.write("\n")
+
+
         self.compiled_metrics.update_state(y_all, y_pred_all[0])
         return {m.name: m.result() for m in self.metrics}
      
@@ -301,6 +310,9 @@ def create_fc_model_SNN(layers, optimizer, X_n=1000, robustness_params={}, N_hid
     N = lambda l: (N_hid[l-1] if type(N_hid)==list else N_hid)
     min_ti=[]
     tj = Input(shape=N_in)
+
+    # Define each SpikingDense layer with its own X_n input; 
+    # each layer also has an entry in min_ti storing the minimum value across the layer during a forward pass
     ti = SpikingDense(N(1), 'dense_1', (X_n[0] if type(X_n)==list else X_n), robustness_params=robustness_params)(tj)
     min_ti.append(tf.reduce_min(ti))
     for i in range(layers-2):
@@ -309,9 +321,6 @@ def create_fc_model_SNN(layers, optimizer, X_n=1000, robustness_params={}, N_hid
     outputs = SpikingDense(N_out, 'dense_output', outputLayer=True, robustness_params=robustness_params)(ti)
     model = ModelTmax (inputs=tj, outputs=[outputs, min_ti])
     model.compile(metrics=['accuracy'], loss=tf.keras.losses.CategoricalCrossentropy(from_logits=True), optimizer=optimizer)
-
-    logging.info(f"### min_ti = {min_ti}")
-
 
     return model
 

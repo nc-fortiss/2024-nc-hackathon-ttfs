@@ -10,6 +10,8 @@ start_time = time.time()
 tf.keras.backend.set_floatx('float64') #to avoid numerical differences when comparing training of ReLU vs SNN
 override = None
 import h5py
+import matplotlib.pyplot as plt
+import utils
 
 # example run: python3 main.py --data_name=MNIST --model_type=SNN --model_name=FC2 --testing=False --epochs=1
 # hint for debugging: to print the values of a tensor, use tf.get_static_value(tensor_input) or also tf.keras.backend.eval(y_all)
@@ -29,6 +31,7 @@ parser.add_argument('--layers', type=int, default=2, help='Number of layers in F
 parser.add_argument('--testing', type=strtobool, default=True, help='Execute testing.')
 parser.add_argument('--load', type=str, default='False', help='Load before training. (True|False|custom_name.h5)')
 parser.add_argument('--save', type=strtobool, default=False, help='Store after training.')
+parser.add_argument('--train_shift', type=strtobool, default=True, help='Re-calculate interval boundaries during training.')
 # Robustness parameters:
 parser.add_argument('--noise', type=float, default=0.0, help='Noise std.dev.')
 parser.add_argument('--time_bits', type=int, default=0, help='number of bits to represent time. 0 -disabled')
@@ -42,6 +45,8 @@ if(len(args[1])>0):
     print("Warning: Ignored args", args[1])
 args = args[0]
 args.model_name = args.data_name + '-' + args.model_name
+utils.TRAIN_SHIFT = args.train_shift
+utils.LOGGING_DIR = args.logging_dir
 set_up_logging(args.logging_dir, args.model_name)
 robustness_params={
     'noise':args.noise,
@@ -66,7 +71,7 @@ model = None
 logging.info("#### Creating the model ####")
 if 'FC2' in args.model_name:
     if 'SNN' in args.model_type:
-        model = create_fc_model_SNN(layers=args.layers,X_n=[5.8, 8.3, 27.4] , optimizer=optimizer, robustness_params=robustness_params)
+        model = create_fc_model_SNN(layers=args.layers,X_n=[10,50] , optimizer=optimizer, robustness_params=robustness_params)
     if 'ReLU' in args.model_type:
         model = create_fc_model_ReLU(layers=args.layers, optimizer=optimizer)
 if 'VGG' in args.model_name:
@@ -106,32 +111,32 @@ if args.load != 'False':
         else:  # custom name
             model.load_weights(args.logging_dir + args.load, by_name=True)
     if 'SNN' in args.model_type:
-        # Load X ranges
-        #if os.path.exists(args.logging_dir + args.model_name + '_X_n.pkl'):
-        '''
-        X_n=pkl.load(open(args.logging_dir + args.model_name + '_X_n.pkl', 'rb'))
+        # Load X_n ranges from the max ANN activations, if available 
+        if os.path.exists(args.logging_dir + args.model_name + '_X_n.pkl'):
+            X_n=pkl.load(open(args.logging_dir + args.model_name + '_X_n.pkl', 'rb'))
+        else:
+            X_n = 1000
         if 'FC2' in args.model_name:
-            model = create_fc_model_SNN(layers=args.layers, optimizer=optimizer, X_n=X_n, robustness_params=robustness_params)
             logging.info(f"### Create new model instance with loaded X_n = {X_n} ###\n")
-        # else:
-        #     X_n=1000
-        model.load_weights(args.logging_dir + args.model_name + '_preprocessed.h5', by_name=True)'
-        '''
+            model = create_fc_model_SNN(layers=args.layers, optimizer=optimizer, X_n=X_n, robustness_params=robustness_params)
+        model.load_weights(args.logging_dir + args.model_name + '_preprocessed.h5', by_name=True)
+
 
 if 'SNN' in args.model_type:
-    # Register SNN intervals as model parameters to ensure model match when loading weights
+    # Register SNN interval boundaries at initialization before training
+    logging.info("#### Set SNN intervals BEFORE training ####")
     t_min, t_max = 0, 1 
     for n, layer in enumerate(model.layers):
         if 'conv' in layer.name or 'dense' in layer.name:
             t_min, t_max = layer.set_params(t_min, t_max)
-    print("\n\n")
-    if args.load != False:
-        print("### Loading SNN FULL weights ###")
+            logging.info(f"layer_{n}: set t_min={layer.t_min}, t_max={layer.t_max}, B_n={layer.B_n}")
+    logging.info("\n\n")
+    '''
+    if args.load == True:
+        logging.info("### Loading SNN FULL weights ###")
         model.load_weights(args.logging_dir + args.model_name + '_weights.h5', by_name=True)
-        logging.info("#### Check SNN intervals after loading ####")
-        for n, layer in enumerate(model.layers):
-            if 'conv' in layer.name or 'dense' in layer.name:
-                logging.info(f"layer_{n}: set t_min={layer.t_min}, t_max={layer.t_max}, B_n={layer.B_n}")
+    '''
+            
 
 if args.testing:
     logging.info("#### Initial test set accuracy testing ####")
@@ -161,6 +166,7 @@ if args.testing and args.epochs > 0:
 
 if args.save and 'ReLU' in args.model_type:
     logging.info("\n\n#### Saving ReLU model ####")
+    # breakpoint()
     # 1. Save original ReLU weights
     model.save_weights(args.logging_dir + '/' + args.model_name + '_weights.h5')
 
@@ -168,7 +174,7 @@ if args.save and 'ReLU' in args.model_type:
     logging.info('fuse (imaginary) BN layers')
     # shift/scale input data accordingly
     data.x_test, data.x_train = (data.x_test - data.p)/(data.q-data.p), (data.x_train - data.p)/(data.q-data.p)
-    BN = 'BN' in args.model_name
+    BN = 'BN' in args.model_name 
     model = fuse_bn(model, BN=BN, p=data.p, q=data.q, optimizer=optimizer)
     logging.info(model.summary())
 
@@ -189,6 +195,7 @@ if args.save and 'ReLU' in args.model_type:
                 layers_max.append(tf.reduce_max(tf.nn.relu(layer.output)))
                 logging.info(f"k={k} --- layers_max={layers_max}")
     extractor = tf.keras.Model(inputs=model.inputs, outputs=layers_max)
+    print(extractor.summary())
     output = extractor.predict(data.x_train, batch_size=64, verbose=1)
     X_n = list(map(lambda x: np.max(x), output))
     logging.info('X_n: %s', X_n)
@@ -196,8 +203,8 @@ if args.save and 'ReLU' in args.model_type:
     logging.info('saved maximum layer output')
 
 if args.save and 'SNN' in args.model_type:
-    logging.info("\n\n#### Saving SNN model trained from scratch ####")
-    model.save_weights(args.logging_dir + '/' + args.model_name + '_weights.h5')
+    logging.info("\n\n#### Saving SNN model weights ###")
+    model.save_weights(args.logging_dir + '/' + args.model_name + '_full_weights.h5')
 
 print('### Total elapsed time [s]:', time.time() - start_time)
 print("\n")
@@ -207,6 +214,7 @@ x_expanded = tf.expand_dims(x, axis=0)
 y = model(x_expanded)
 
 
+'''
 i, j = 69,200
 for n, layer in enumerate(model.layers):
     print(f"Layer={layer.name}")
@@ -219,7 +227,6 @@ for n, layer in enumerate(model.layers):
         threshold= layer.t_max - layer.t_min - layer.D_i
 
 
-    '''
     if 'conv' in layer.name or 'dense' in layer.name and not 'output' in layer.name:
         print(f"    kernel.shape={layer.kernel.shape}")
         print(f"    inputs.shape={layer.inputs.shape}")
@@ -248,3 +255,4 @@ if 'SNN' in args.model_type:
     for n, layer in enumerate(model.layers):
         if 'conv' in layer.name or 'dense' in layer.name:
             logging.info(f"layer_{n}: t_min={layer.t_min}, t_max={layer.t_max}, B_n={layer.B_n}")
+    logging.info("\n\n")

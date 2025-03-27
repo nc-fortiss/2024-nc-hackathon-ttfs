@@ -4,6 +4,10 @@ import sys
 import numpy as np
 import tensorflow as tf
 
+# Global variable: if 'True', then the interval boundaries (t_max in particular) 
+# will shift during training depending on the collected maximum output activations 
+TRAIN_SHIFT = True
+LOGGING_DIR = ''
 
 def set_up_logging(logging_dir, model_name):
     """
@@ -150,6 +154,7 @@ def copy_model(fused_model, model, i):
     Deep copy of a model and exchange Conv with Conv2DWithBias layers and MaxPool with MaxMinPool layers.
     The layers which are not used during inference are dropped.
     """
+    logging.info("### Creating deep copy of model instance ###")
     while i < len(model.layers):
         while 'dropout' in model.layers[i].name or 'activity_regularization' in model.layers[i].name: i+=1
         # Deep copy of layer.
@@ -173,6 +178,7 @@ def fuse_bn(model, p, q, optimizer, BN = True, BN_before_ReLU = False):
         Changes bias on locations where it is needed; 
         Transforms MaxPooling layers in MaxMinPooling layers and Conv2D layers in Conv2DWithBias.  
     """
+    logging.info("## Fusing BN layers ###")
     fused_model = tf.keras.Sequential()
     # Add input layer.
     fused_model.add(copy_layer(model.layers[0]))
@@ -225,6 +231,7 @@ def fuse_imaginary_bn(fused_model, model, p, q):
     """
     Fuse an imaginary batch normalization layer due to an input on arbitrary [p, q] range different from [0, 1].
     """
+    logging.info("### Imaginary fuse BN ###")
     first_layer = model.layers[1]
     input_image_shape, _, input_channels, _ = tf.shape(first_layer.kernel)
     kappa = tf.cast(tf.fill((input_channels), value=q-p), dtype=tf.float64)
