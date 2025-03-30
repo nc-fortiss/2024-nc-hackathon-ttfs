@@ -14,10 +14,10 @@ import os
 override = None       # hard-code args parameters instead of passing them over the CLI
 
 # Example run scripts, useful for testing 
-# Train FC ReLU only:                           python3 main_torch.py --data_name=MNIST --model_type=ReLU --model_name=FC2 --epochs=1
+# Train FC ReLU only:                           python3 main_torch.py --data_name=MNIST --model_type=ReLU --model_name=FC2 --epochs=1 --save=True
 # Train FC SNN only (no conversion):            python3 main_torch.py --data_name=MNIST --model_type=SNN --model_name=FC2 --epochs=5
-# Fine-tune SNN on ANN weights, evaluate test:  python3 main_torch.py --data_name=MNIST --model_type=SNN --model_name=FC2 --load=True --testing=True --epochs=0
-#
+# Convert ANN-SNN, evaluate test with no train: python3 main_torch.py --data_name=MNIST --model_type=SNN --model_name=FC2 --load=True --testing=True --epochs=0
+# Fine-tune SNN on ANN weights, evaluate test:  python3 main_torch.py --data_name=MNIST --model_type=SNN --model_name=FC2 --load=True --testing=True --epochs=1
         
 '''
     Command-line argument parsing
@@ -160,7 +160,11 @@ if args.epochs > 0:
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.9)      # step-wise learning rate adjustment
     loss_fn = nn.CrossEntropyLoss()
 
-    train_FC_SNN(model, dataset.train_load, args.epochs, optimizer=optimizer, scheduler=scheduler)
+    if 'SNN' in args.model_type:
+        train_FC_SNN(model, dataset.train_load, args.epochs, optimizer=optimizer, scheduler=scheduler)
+    elif 'ReLU' in args.model_type:
+        model.fit(dataset.train_load, optimizer, loss_fn, epochs=args.epochs)
+    
     config_utils.logging.info("--- Finished training the model ---")
 
 if args.testing and args.epochs > 0:
@@ -195,6 +199,7 @@ if 'SNN' in args.model_type:
         config_utils.logging.info(f"layer_{n}: t_min={layer.t_min}, t_max={layer.t_max}")
     config_utils.logging.info(f"output_layer: t_min={model.output_layer.t_min}, t_max={model.output_layer.t_max}\n")
 
+
 ''' Make another forward pass post-training, log the input spike times and plot them '''
 config_utils.logging.info("\n\n\n--- Attempt another forward pass ---\n")
 config_utils.DEBUG_MODE = True          # this will enable the logging+print statements in each forward pass call
@@ -206,4 +211,3 @@ config_utils.logging.info(f"Shape of input x: {(x.shape)}")
 y = model(x)
 config_utils.logging.info(f"Model output: {y}")
 config_utils.plot_input_spikes()
-config_utils.DEBUG_MODE = False 

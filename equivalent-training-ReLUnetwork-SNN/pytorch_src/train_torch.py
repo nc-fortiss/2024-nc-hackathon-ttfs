@@ -16,8 +16,10 @@ def train_FC_SNN(model, train_loader, epochs, optimizer, scheduler):
         correct = 0         # count correct labels per epoch
         total_samples = 0
         
+        batches = 0
         for (inputs, truth_labels) in train_loader:       # load next batch
             # breakpoint()
+            model.min_spike_times = {}
             optimizer.zero_grad()
             outputs = model(inputs)         # forward pass
             loss = F.cross_entropy(outputs, truth_labels) # compute loss with current weights
@@ -30,6 +32,28 @@ def train_FC_SNN(model, train_loader, epochs, optimizer, scheduler):
             total_samples += truth_labels.shape[0]
 
             running_loss += loss.item()
+
+            # if enabled, t_max will be updated layer-wise as part of the training procedure
+            if config_utils.TRAIN_SHIFT:
+                
+                t_min_prev, t_min, k = 0.0, 1.0, 0
+                for layer in model.hidden_layers:
+                    layer_name = f"layer_{k}"
+                    
+                    t_max = t_min + max(layer.t_max - layer.t_min, 10.0*(layer.t_max - model.min_spike_times[layer_name]))
+                    layer.t_min_prev = t_min_prev 
+                    layer.t_min = t_min 
+                    layer.t_max = t_max 
+
+                    t_min_prev, t_min = t_min, t_max 
+                    k += 1 
+                
+                # update t_min and t_max in the output layer accordingly
+                model.output_layer.t_min = t_max        # last t_max becomes this t_min
+                model.output_layer.t_max = 0            # non-spiking, irrelevant
+
+            batches += 1
+            if (batches % 100 == 0): config_utils.logging.info(f"### trained on {batches} batches: - min_ti={model.min_spike_times}")
 
         scheduler.step()        # update learning rate 
 

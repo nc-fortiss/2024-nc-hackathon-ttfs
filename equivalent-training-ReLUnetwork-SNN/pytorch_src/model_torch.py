@@ -241,6 +241,10 @@ class FC_SNN_torch(nn.Module):
         X_n: window-scaling factor (TODO: clarify)
         N(l): lambda to extract 'N_hid' if it is a list
         hidden_layers: list of nn.Module hidden layers
+        output_layer: the (non-spiking) output layer; pass X_n := 1
+        min_spike_times: collects the minimum spiking timestamp per individual layer for a single
+            forward pass; it is reset after each forward() call and is used to update t_max in training
+        
 
     # TODO: define min_ti's as in tensorflow    
     
@@ -262,8 +266,15 @@ class FC_SNN_torch(nn.Module):
         for i in range(self.N_layers-2):        # If N_layers > 2, append the rest of the layers
             self.hidden_layers.append(SpikingDenseTorch(self.N(i+2), self.N(i+2), (X_n[i+1] if type(X_n)==list else X_n), robustness_params=robustness_params)) 
 
-
+        # Add output layer separetely
         self.output_layer = SpikingDenseTorch(self.N(self.N_layers), self.N_out, robustness_params=robustness_params, is_output=True)
+
+        # Register forward hooks on each hidden layer
+        self.min_spike_times = {}
+        for i, layer in enumerate(self.hidden_layers):
+           layer_name = f"layer_{i}"
+           layer.register_forward_hook(self.get_min_spiketime(layer_name))
+
 
         # Store the layer-wise spike-time outputs as a list of lists
         self.layer_activations = [ np.empty([0]) for _ in range(len(self.hidden_layers)) ]
@@ -311,6 +322,25 @@ class FC_SNN_torch(nn.Module):
             else: 
                 t_min, t_max = child.set_intervals(t_min,t_max)    # for the output layer 
                 layer_num+=1 
+
+    def get_min_spiketime(self, name):
+        '''
+            Returns the minimum (first) spiking timestamp for a single layer during a forward pass.
+            This minimum is updated for each new forward call. It is then used for updating t_max
+            when a forward call is made on each new batch while training the SNN.
+         
+            @name: string, name of the layer
+        '''
+        def hook(model, input, output):
+            # Collect the minimum layer output spike time for this batch on this forward call
+            forward_output_min = torch.min(output).item()
+            self.min_spike_times[name] = forward_output_min
+
+        return hook
+
+
+
+
 
     def _create_hook_fn(self, layer_name):
         ''' Creates a hook function for a specific layer '''

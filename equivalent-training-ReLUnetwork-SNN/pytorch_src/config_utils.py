@@ -51,7 +51,7 @@ def load_ANN_weights(snn_model, load_path):
         @load_path: path to the .pth file with the ANN weights
     '''
     # Adapted from: https://discuss.pytorch.org/t/loading-weights-from-pretrained-model-with-different-module-names/11841/3 (Accessed 27/03/2025)
-    ann_state_dict = torch.load(load_path)
+    ann_state_dict = torch.load(load_path, weights_only=True)
     snn_state_dict = snn_model.state_dict()
 
     layer=0
