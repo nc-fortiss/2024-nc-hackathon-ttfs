@@ -142,6 +142,7 @@ class ModelTmax(tf.keras.Model):
 
     def train_step(self, data):
         # breakpoint()
+        utils.BATCHES += 1
         x, y_all = data
         with tf.GradientTape() as tape:
             y_pred_all = self(x, training=False)        # call to model will return a list: y_pred_all[0] for the output logits; y_pred_all[1] for the min_ti list 
@@ -343,18 +344,18 @@ def call_spiking(tj, W, D_i, t_min_prev, t_min, t_max, robustness_params):
     threshold = t_max - t_min - D_i
 
     #### For debugging only ####
-
-
     
     # breakpoint()
-    #print("call spiking")
-    # print("t_min=", t_min)
-    # print("t_max=", t_max)
-    # print("Input tj=", tf.get_static_value(tj))
-    # print("D_i=", tf.get_static_value(D_i))
-    # print("threshold= ",tf.get_static_value(threshold))
-    # print("Weight W=", tf.get_static_value(W))
-    
+    if (utils.BATCHES > 0 and utils.BATCHES % 500 == 0) or (utils.BATCHES > 7000):
+        
+        print("call spiking")
+        print("t_min=", t_min)
+        print("t_max=", t_max)
+        # print("Input tj=", tf.get_static_value(tj))
+        print("D_i=", D_i)
+        print("threshold= ",tf.get_static_value(threshold))
+        # logging.info("Weight W=", tf.get_static_value(W))
+        breakpoint()
     # Calculate output spiking time ti (Eq. 7)
     ti = (tf.matmul(tj-t_min, W) + threshold + t_min)
     # Ensure valid spiking time. Do not spike for ti >= t_max.

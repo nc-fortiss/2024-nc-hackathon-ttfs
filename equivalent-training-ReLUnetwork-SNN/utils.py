@@ -8,6 +8,7 @@ import tensorflow as tf
 # will shift during training depending on the collected maximum output activations 
 TRAIN_SHIFT = True
 LOGGING_DIR = ''
+BATCHES = 0
 
 def set_up_logging(logging_dir, model_name):
     """
