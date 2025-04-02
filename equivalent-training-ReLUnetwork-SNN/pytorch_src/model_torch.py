@@ -17,18 +17,10 @@ def call_spiking(tj, W, D_i, t_min_prev, t_min, t_max, robustness_params):
     threshold = t_max - t_min - D_i
     # Calculate output spiking time ti (Eq. 7)
     ### Debugging only ###
-    '''
-    print("call spiking")
-    print("t_min=", t_min)
-    print("t_max=", t_max)
-    print("tj=", tj)
-
-
-    print("D_i=",D_i)
-    print("thres=", threshold)
-    print("\n")
+    
+    # print(f"call spiking --- t_min={t_min} --- t_max={t_max} --- thresh={threshold[0]} --- tj.shape={tj.shape}")
     # breakpoint()
-    '''
+
     ti = (torch.matmul(tj-t_min, W) + threshold + t_min)
 
     # Ensure valid spiking time. Do not spike for ti >= t_max.
@@ -37,6 +29,28 @@ def call_spiking(tj, W, D_i, t_min_prev, t_min, t_max, robustness_params):
     # Add noise to the spiking time for noise simulations
     ti = ti + torch.normal(mean=0.0, std=robustness_params['noise'], size=ti.shape, dtype=torch.float64)
     return ti
+
+def compute_membrane_potential(t, i, tj, W):
+    '''
+        Evaluates the membrane potential at the time point (t) for neuron(i) in layer N
+        given input spike times (tj), the boundary (t_min) and the kernel (W) from layer N.
+        Only spike times up to (t) are considered for the evaluation of the membrane potential,
+        given that the input spike time array (tj) already contains all the spikes from layer (N-1)
+    
+    '''
+    # breakpoint()
+    W_i = W[:, i]         # filter for all synapses connected to neuron (i) in Layer N 
+    
+    mask = (tj <= t)     # only spikes earlier than (t) have already contributed to V
+
+    previous_spikes = np.where(mask, tj, 0.0)    # only active spikes keep value, else 0.0
+    previous_active_weights = np.where(mask, W_i, 0.0)    # only active weights
+
+    shift = (t - previous_spikes)   # shift relative distance between current (t) and (tj)
+    weighted_sum = np.matmul(shift, previous_active_weights)        # W * (t-tj) for active pre-neurons j
+
+    return weighted_sum 
+
 
 class SpikingDenseTorch(nn.Module):
     ''' Creates a single Spiking Dense Layer 
@@ -289,7 +303,7 @@ class FC_SNN_torch(nn.Module):
 
     def forward(self, x):
         ''' Defines the forward pass through the entire SNN architecture '''
-
+        # breakpoint()
         for i, l in enumerate(self.hidden_layers):
             x = l(x)
 

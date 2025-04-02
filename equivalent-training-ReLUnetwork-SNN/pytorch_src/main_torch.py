@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import pickle as pkl
 import pdb
 import os 
+import plotting
 
 
 override = None       # hard-code args parameters instead of passing them over the CLI
@@ -210,4 +211,20 @@ x = tuple[0]
 config_utils.logging.info(f"Shape of input x: {(x.shape)}")
 y = model(x)
 config_utils.logging.info(f"Model output: {y}")
+print(model.layer_activations)
+print(" \n")
+
+
+
+''' -------------------- Membrane Potential Plots --------------------- '''
+
+# Get the index of the neuron that produced the very first spike in the next layer
+output_activations = model.layer_activations[1]
+sorted_output_activations = np.sort(model.layer_activations[1])
+sorted_index_activations = np.argsort(model.layer_activations[1])
+min_spike_neuron_index = sorted_index_activations[0]
+
+
 config_utils.plot_input_spikes()
+# plotting.plot_membrane_potential(model, [min_spike_neuron_index, 140, 200])
+plotting.plot_membrane_potential(model, [min_spike_neuron_index])

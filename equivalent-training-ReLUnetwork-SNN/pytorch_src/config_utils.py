@@ -125,8 +125,6 @@ def plot_input_spikes():
             spikes = [float(v) for v in line.split()]  
             spikes_per_layer.append(spikes)
 
-            
-    
 
     plt.figure(figsize=(10, 5))
     # plt.hist(spikes_per_layer, bins=30, density=True)
