@@ -1,6 +1,6 @@
 import argparse
 from dataset_torch import Dataset_Torch
-from train_torch import train_FC_SNN, evaluate_FC_SNN
+import train_torch
 import config_utils
 from model_torch import *
 import torch
@@ -49,7 +49,7 @@ parser.add_argument('--time_bits', type=int, default=0, help='number of bits to 
 parser.add_argument('--weight_bits', type=int, default=0, help='number of bits to represent weights. 0 -disabled')
 parser.add_argument('--w_min', type=float, default=-1.0, help='w_min to use if weight_bits is enabled')
 parser.add_argument('--w_max', type=float, default=1.0, help='w_max to use if weight_bits is enabled')
-parser.add_argument('--latency_quantiles', type=float, default=0.0, help='Number of quantiles to take into account when calculating t_max. 0 -disabled')
+parser.add_argument('--latency_quantiles', type=float, default=1.0, help='Number of quantiles to take into account when calculating t_max. default no crop')
 parser.add_argument('--mode', type=str, default='', help='Ignore: A hack to address a bug in argsparse during debugging')
 
 # Returns a tuple: args[0] is a Namespace with all the known parameters from 'parser' and 'override', args[1] contains ignored unknown parameters 
@@ -77,6 +77,7 @@ robustness_params={
 ''' Instantiate Data Loaders with appropriate parameters'''
 dataset = Dataset_Torch(
     args.data_name,
+    args.batch_size,
     flatten= ('FC' in args.model_name),
     convert_ttfs = ('SNN' in args.model_type),   
     ttfs_noise=args.noise,
@@ -96,8 +97,8 @@ if model is None:
     print('Please specify a valid model. Exiting.')
     exit(1)
 
-print(model)
-print("\n") 
+config_utils.logging.info(model)
+config_utils.logging.info("\n") 
 
 
 ''' Load pre-trained weights as needed (pass --load=True or --load==custom_name)'''
@@ -115,12 +116,20 @@ if args.load != 'False':
             X_n = pkl.load(open(args.logging_dir + args.model_name + '_X_n.pkl', 'rb'))
         else:
             X_n = [10,50] 
+
         if 'FC2' in args.model_name:
             config_utils.logging.info(f"### Create new SNN model instance with loaded X_n = {X_n} ###\n")
             model = create_torch_fc_model_SNN(X_n=X_n, layers=args.layers, robustness_params=robustness_params)
 
         # After creating model instance with new X_n ranges, load the weights
-        load_path = args.logging_dir + args.model_name + '_weights.pth'
+        # if os.path.exists(args.logging_dir + 'model/full_snn_weights.pth'):
+            # config_utils.logging.info("### Loading full from-scratch SNN weights")
+            # load_path = args.logging_dir + 'model/full_snn_weights.pth'
+            # args.epochs=0
+            # args.testing=True
+        # else: 
+            config_utils.logging.info("### Loading converted ANN weights")
+            load_path = args.logging_dir + args.model_name + '_weights.pth'
         config_utils.load_ANN_weights(model, load_path)
 
 
@@ -150,7 +159,13 @@ config_utils.logging.info(f"Model output: {y}")#
 ''' Make a test run on testset pre-training '''
 if args.testing == True:
     config_utils.logging.info("\n--- Evaluating model on testset before training // fine-tuning ---")
-    evaluate_FC_SNN(model, dataset.test_load)
+    if 'SNN' in args.model_type:
+        train_torch.evaluate_FC_SNN(model, dataset.test_load)
+    elif 'ReLU' in args.model_type:
+        train_torch.evaluate_FC_ReLU(model, dataset.test_load)
+    else:
+        config_utils.logging.info("###  Invalid model ###")
+        exit(1)
 
 
 ''' Start training loop '''
@@ -162,15 +177,19 @@ if args.epochs > 0:
     loss_fn = nn.CrossEntropyLoss()
 
     if 'SNN' in args.model_type:
-        train_FC_SNN(model, dataset.train_load, args.epochs, optimizer=optimizer, scheduler=scheduler)
+        train_torch.train_FC_SNN(model, dataset.train_load, args.epochs, optimizer=optimizer, scheduler=scheduler)
     elif 'ReLU' in args.model_type:
-        model.fit(dataset.train_load, optimizer, loss_fn, epochs=args.epochs)
+        train_torch.train_FC_ReLU(model, dataset.train_load, optimizer, loss_fn, epochs=args.epochs)
     
     config_utils.logging.info("--- Finished training the model ---")
 
 if args.testing and args.epochs > 0:
     config_utils.logging.info("### Final test set accuracy (after training / fine-tuning) ###")
-    evaluate_FC_SNN(model, dataset.test_load)    
+    if 'SNN' in args.model_type:
+        train_torch.evaluate_FC_SNN(model, dataset.test_load)
+    elif 'ReLU' in args.model_type:
+        train_torch.evaluate_FC_ReLU(model, dataset.test_load)
+   
     
 ''' Save model weights post-training'''
 if args.save == True:
@@ -191,7 +210,7 @@ if args.save == True:
     if 'SNN' in args.model_type:
         # save the SNN when trained fully from scratch to avoid re-training (this is NOT the ANN-SNN conversion step)
         save_path = args.logging_dir + 'model/full_snn_weights.pth'
-        config_utils.logging.info(f"Saving model post-training to {save_path}")
+        config_utils.logging.info(f"### Saving model post-training to {save_path}")
         torch.save(model.state_dict(), save_path)   # save weights as dict rather than the entire model
 
 if 'SNN' in args.model_type:
@@ -204,27 +223,92 @@ if 'SNN' in args.model_type:
 ''' Make another forward pass post-training, log the input spike times and plot them '''
 config_utils.logging.info("\n\n\n--- Attempt another forward pass ---\n")
 config_utils.DEBUG_MODE = True          # this will enable the logging+print statements in each forward pass call
-config_utils.clean_spike_logs() 
+config_utils.clean_spike_logs(model) 
 model.eval()
 tuple = dataset.train_set.__getitem__(0)
 x = tuple[0]
 config_utils.logging.info(f"Shape of input x: {(x.shape)}")
 y = model(x)
 config_utils.logging.info(f"Model output: {y}")
-print(model.layer_activations)
-print(" \n")
-
+# print(model.layer_activations)
+print("\n")
+config_utils.DEBUG_MODE = False 
+  
 
 
 ''' -------------------- Membrane Potential Plots --------------------- '''
+if 'SNN' in args.model_type:
+    config_utils.logging.info("\nValidation Accuracy before adjusting latency quantiles: ")
+    train_torch.evaluate_FC_SNN(model, dataset.test_load)
+    # Get the index of the neuron that produced the very first spike in the next layer
+    output_activations = model.layer_activations[1]
+    sorted_output_activations = np.sort(model.layer_activations[1])
+    sorted_index_activations = np.argsort(model.layer_activations[1])
+    min_spike_neuron_index = sorted_index_activations[0]
 
-# Get the index of the neuron that produced the very first spike in the next layer
-output_activations = model.layer_activations[1]
-sorted_output_activations = np.sort(model.layer_activations[1])
-sorted_index_activations = np.argsort(model.layer_activations[1])
-min_spike_neuron_index = sorted_index_activations[0]
+
+    config_utils.plot_input_spikes()
 
 
-config_utils.plot_input_spikes()
-# plotting.plot_membrane_potential(model, [min_spike_neuron_index, 140, 200])
-plotting.plot_membrane_potential(model, [min_spike_neuron_index])
+    crop_quantile = model.hidden_layers[1].robustness_params['latency_quantiles']
+    print(model.layer_activations)
+    plotting.plot_membrane_potential(model, [min_spike_neuron_index, 140, 200], 
+        f"t_max_1={np.round(model.hidden_layers[1].t_max)} - crop={crop_quantile}")
+    # config_utils.clean_spike_logs(model) 
+
+    # print(model.layer_activations)
+
+    ''' ----------- Instantiate new SNNs with cropped latency quantiles ------------'''
+    # config_utils.logging.info("\n### Adjusting latency quantiles ###")
+    # for i in range(1,5):
+    #     quantile = 1 - (i+1) * 0.01
+    #     for layer in model.hidden_layers:
+    #         layer.robustness_params["latency_quantiles"] = quantile
+        
+    #     config_utils.logging.info(f"--- Preserved Spikes at {quantile} quantile")
+    #     evaluate_FC_SNN(model, dataset.test_load)  
+    #     print("\n")
+    
+    # crop_quantile = model.hidden_layers[1].robustness_params['latency_quantiles']
+    # title=f"t_max_1={np.round(model.hidden_layers[1].t_max,2)} - crop={crop_quantile}"
+
+    # config_utils.DEBUG_MODE = True
+    # print(model.layer_activations)
+    # model.eval()
+    # y = model(x)
+    # plotting.plot_membrane_potential(model, [min_spike_neuron_index, 140, 200], title_addition=title) 
+    # # print(model.layer_activations)
+    # config_utils.DEBUG_MODE = False
+
+
+    ''' --------------  Threshold shifting ------------ '''
+
+    config_utils.logging.info("### Applying threshold adjustment ###")
+    for i, layer in enumerate(model.hidden_layers):
+        min_layer_activation = np.min(model.layer_activations[i])
+
+        shift = min_layer_activation - layer.t_min 
+        t_max_new = layer.t_max - shift
+        config_utils.logging.info(f'### Layer_{i} -- current t_min={layer.t_min}, t_max={layer.t_max}')
+        config_utils.logging.info(f"### min_spike_time: {min_layer_activation} -- shift={shift} -- t_max_new = {t_max_new}")
+
+        layer.t_max = t_max_new 
+        if i == (len(model.hidden_layers)-1):   # last hidden layer
+            model.output_layer.t_min = t_max_new
+        else:
+            model.hidden_layers[i+1].t_min = t_max_new
+    
+    config_utils.logging.info(f"--- Evaluation after update --- ")
+    train_torch.evaluate_FC_SNN(model, dataset.test_load) 
+
+
+    config_utils.DEBUG_MODE = True
+    config_utils.clean_spike_logs(model)
+    model.eval()
+    y = model(x)
+    print(model.layer_activations)
+    title=f"t_max_1={np.round(model.hidden_layers[1].t_max,2)} - crop={crop_quantile} - adjusted threshold"
+    plotting.plot_membrane_potential(model, [min_spike_neuron_index, 140, 200], title_addition=title)
+    config_utils.clean_spike_logs(model) 
+    print(model.layer_activations)
+    config_utils.DEBUG_MODE = False

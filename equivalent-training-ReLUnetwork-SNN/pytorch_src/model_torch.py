@@ -25,7 +25,9 @@ def call_spiking(tj, W, D_i, t_min_prev, t_min, t_max, robustness_params):
 
     # Ensure valid spiking time. Do not spike for ti >= t_max.
     # No spike is modelled as t_max that cancels out in the next layer (tj-t_min) as t_min there is t_max
-    ti = torch.where(ti < t_max, ti, t_max)
+    # if config_utils.DEBUG_MODE: breakpoint()
+    # ti = torch.where(ti < t_max, ti, t_max)
+    ti = torch.where(ti < robustness_params['latency_quantiles'] * t_max, ti, t_max)
     # Add noise to the spiking time for noise simulations
     ti = ti + torch.normal(mean=0.0, std=robustness_params['noise'], size=ti.shape, dtype=torch.float64)
     return ti
@@ -188,40 +190,6 @@ class FC_ReLU_torch(nn.Module):
         x = self.hidden_layers[self.N_layers-1](x)
         return x
     
-    def fit(self,train_data, optimizer,loss_criterion,epochs=5):
-        '''
-            Train the neural network on the input 'train_data'. 
-            Adapted from: https://pytorch.org/tutorials/beginner/blitz/cifar10_tutorial.html#train-the-network (Accessed 24/02/2025)
-        '''
-        self.train()
-        train_acc = 0
-        total = 0
-        for epoch in range(epochs):  
-
-            running_loss = 0.0
-            for batch_idx, (data,target) in enumerate(train_data):
-
-                # breakpoint()
-                
-                optimizer.zero_grad()
-
-                outputs = self.forward(data)
-                loss = loss_criterion(outputs, target)
-                loss.backward()
-                optimizer.step()
-
-                _, preds  = torch.max(outputs, dim=1)
-
-                train_acc += torch.sum(preds == target)
-                total += len(preds)
-
-                # print statistics
-                running_loss += loss.item()
-                if batch_idx % 100 == 0:    
-                    print(f'[{epoch + 1}, {batch_idx + 1:5d}] loss: {running_loss / 100:.3f} --- acc: {train_acc / total}')
-                    running_loss = 0.0
-
-        print('Finished Training')
 
     def get_max_activation(self, name):
         '''

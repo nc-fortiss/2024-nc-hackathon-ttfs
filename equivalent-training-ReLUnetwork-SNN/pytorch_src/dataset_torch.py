@@ -20,8 +20,9 @@ class Dataset_Torch:
         train_load, test_load: provides the respective DataLoader interface for accessing batches
     '''
 
-    def __init__(self, dataset_name, flatten, convert_ttfs, ttfs_noise=0, ):
+    def __init__(self, dataset_name, batch_size, flatten, convert_ttfs, ttfs_noise=0):
         self.name = dataset_name
+        self.batch_size = batch_size
         self.flatten = flatten  
         self.ttfs_noise = ttfs_noise 
         self.convert_ttfs = convert_ttfs
@@ -29,8 +30,8 @@ class Dataset_Torch:
         self.get_features_vectors()         # TODO: pass 'flatten' as a variable instead of setting it as an attribute (?)
         self.convert_ttfs = convert_ttfs
 
-        self.train_load = torch.utils.data.DataLoader(self.train_set, batch_size=64,shuffle=True)
-        self.test_load = torch.utils.data.DataLoader(self.test_set, batch_size=64,shuffle=False)
+        self.train_load = torch.utils.data.DataLoader(self.train_set, batch_size=self.batch_size,shuffle=True)
+        self.test_load = torch.utils.data.DataLoader(self.test_set, batch_size=self.batch_size,shuffle=False)
 
       
     def get_features_vectors(self):
