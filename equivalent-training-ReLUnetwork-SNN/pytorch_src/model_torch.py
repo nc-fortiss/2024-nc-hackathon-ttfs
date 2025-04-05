@@ -5,6 +5,7 @@ import torch.nn.init as init
 import numpy as np
 import config_utils
 import h5py
+import pickle
 
 # import pdb   # debugger
 
@@ -251,12 +252,15 @@ class FC_SNN_torch(nn.Module):
         # Add output layer separetely
         self.output_layer = SpikingDenseTorch(self.N(self.N_layers), self.N_out, robustness_params=robustness_params, is_output=True)
 
-        # Register forward hooks on each hidden layer
+        # Register forward hooks on each hidden layer to capture intermediate output activations layer-wise
+        self.activations = {}
         self.min_spike_times = {}
+        self.collect_activations = False    # set in the main to control when outputs are collected
         for i, layer in enumerate(self.hidden_layers):
            layer_name = f"layer_{i}"
            layer.register_forward_hook(self.get_min_spiketime(layer_name))
-
+           layer.register_forward_hook(self.get_activations(layer_name))
+           
 
         # Store the layer-wise spike-time outputs as a list of lists
         self.layer_activations = [ np.empty([0]) for _ in range(len(self.hidden_layers)) ]
@@ -288,7 +292,9 @@ class FC_SNN_torch(nn.Module):
 
         x = self.output_layer(x)
         return x 
-    
+
+
+ 
     def set_snn_intervals(self, t_min_start=0, t_max_start=1):
         ''' Helper function to create the [t_min, t_max] boundaries for the 
             integrate vs spike time windows for each layer. 
@@ -305,38 +311,65 @@ class FC_SNN_torch(nn.Module):
                 t_min, t_max = child.set_intervals(t_min,t_max)    # for the output layer 
                 layer_num+=1 
 
-    def get_min_spiketime(self, name):
+    def get_min_spiketime(self, layer_name):
         '''
             Returns the minimum (first) spiking timestamp for a single layer during a forward pass.
             This minimum is updated for each new forward call. It is then used for updating t_max
             when a forward call is made on each new batch while training the SNN.
          
-            @name: string, name of the layer
+            @layer_name: string, name of the layer
         '''
         def hook(model, input, output):
             # Collect the minimum layer output spike time for this batch on this forward call
             forward_output_min = torch.min(output).item()
-            self.min_spike_times[name] = forward_output_min
+            self.min_spike_times[layer_name] = forward_output_min
 
         return hook
 
+    def get_activations(self, layer_name):
+        '''
+            Collects the activations from the outputs of each layer. In this case
+            the outputs are the spike time-stamps. Activations are collected only when 
+            'collect_activations' is set in the main, to control the collection process. 
 
+            @layer_name: string, name of the layer
+        '''
+        def hook(model, input, output):
+            # Collect the output spikes time during a forward call
+            if self.collect_activations:
+                if layer_name not in self.activations:
+                    self.activations[layer_name] = []     
+                self.activations[layer_name].extend(output.flatten().detach().cpu().tolist())
 
+        return hook
 
+    def dump_activations(self, path):
+        '''
+        Dumps all the layer-wise collected activations into the .npy file specified
+        at 'path'. It also clears the dictionary 'self.activations' to make space for 
+        later further collections. 
+        '''
+        with open(path, "wb") as f:
+            pickle.dump(self.activations, f)
+            
+        # TODO: to ease saving/loading, construct the absolute constant path inside function
+        # and pass the file name only as input. Same should change in plotting function
 
-    def _create_hook_fn(self, layer_name):
-        ''' Creates a hook function for a specific layer '''
-        def hook_fn(module, input, output):
-            self.activations[layer_name].append(output.detach().cpu().numpy())
-        return hook_fn
     
-    def save_activations(self, save_path):
-        ''' Saves activations to an HDF5 file '''
-        with h5py.File(save_path, 'w') as f:
-            for layer_name, activation_list in self.activations.items():
-                # Concatenate all activations for this layer
-                activations = np.concatenate(activation_list, axis=0)
-                f.create_dataset(layer_name, data=activations, dtype='float32')
+    # def _create_hook_fn(self, layer_name):
+    #     ''' Creates a hook function for a specific layer '''
+    #     def hook_fn(module, input, output):
+    #         self.activations[layer_name].append(output.detach().cpu().numpy())
+    #     return hook_fn
+    
+    
+    # def save_activations(self, save_path):
+    #     ''' Saves activations to an HDF5 file '''
+    #     with h5py.File(save_path, 'w') as f:
+    #         for layer_name, activation_list in self.activations.items():
+    #             # Concatenate all activations for this layer
+    #             activations = np.concatenate(activation_list, axis=0)
+    #             f.create_dataset(layer_name, data=activations, dtype='float32')
         
 
 def create_torch_fc_model_ReLU(layers=2, N_hid=340,N_in=784, N_out=10):
