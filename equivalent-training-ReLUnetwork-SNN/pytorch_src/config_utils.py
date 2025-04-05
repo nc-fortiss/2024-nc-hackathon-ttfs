@@ -32,6 +32,10 @@ def set_up_logging(logging_dir, model_name):
     global LOGGING_DIR
     LOGGING_DIR = logging_dir
 
+    # Create sub-directories if non-existent
+    if not os.path.exists(logging_dir + '/outputs'):
+        os.makedirs(logging_dir + '/outputs')
+
     
 def clean_spike_logs(model):
     ''' Cleans any existing spike-time files from the logging directory  '''

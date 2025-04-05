@@ -2,7 +2,6 @@ import numpy as np
 import torch
 import torch.utils
 from torchvision import datasets, transforms
-from PIL import ImageFilter
 
 class Dataset_Torch:
     ''' Creates and returns train and test data, in the proper format, shape and values by importing from torch datasets
