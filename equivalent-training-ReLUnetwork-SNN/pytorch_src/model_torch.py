@@ -28,6 +28,7 @@ def call_spiking(tj, W, D_i, t_min_prev, t_min, t_max, robustness_params):
     # No spike is modelled as t_max that cancels out in the next layer (tj-t_min) as t_min there is t_max
     # if config_utils.DEBUG_MODE: breakpoint()
     # ti = torch.where(ti < t_max, ti, t_max)
+    # TODO: how to set ti if ti >= t_max_quantized
     ti = torch.where(ti < robustness_params['latency_quantiles'] * t_max, ti, t_max)
     # Add noise to the spiking time for noise simulations
     ti = ti + torch.normal(mean=0.0, std=robustness_params['noise'], size=ti.shape, dtype=torch.float64)
@@ -354,6 +355,18 @@ class FC_SNN_torch(nn.Module):
             
         # TODO: to ease saving/loading, construct the absolute constant path inside function
         # and pass the file name only as input. Same should change in plotting function
+
+    def apply_max_quantiles(self, quantile):
+        '''
+            Apply latency quantiles to the t_max boundary of each layer. This simulates shifting t_max
+            closer to t_min without actually modifying the boundary. If an input spike arrives at or 
+            right after (t_max*quantile), this spike is considered as irrelevant. 
+            # TODO: explain this better - what is the advantage of doing this?
+        '''
+        quantile = quantile/100
+        for layer in self.hidden_layers:
+            layer.robustness_params["latency_quantiles"] = quantile
+        
 
     
     # def _create_hook_fn(self, layer_name):

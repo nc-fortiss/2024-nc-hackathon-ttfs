@@ -15,9 +15,9 @@ import plotting
 override = None       # hard-code args parameters instead of passing them over the CLI
 
 # Example run scripts, useful for testing 
-# Train FC ReLU only:                           python3 main_torch.py --data_name=MNIST --model_type=ReLU --model_name=FC2 --epochs=1 --save=True
-# Train FC SNN only (no conversion):            python3 main_torch.py --data_name=MNIST --model_type=SNN --model_name=FC2 --epochs=5
-# Convert ANN-SNN, evaluate test with no train: python3 main_torch.py --data_name=MNIST --model_type=SNN --model_name=FC2 --load=True --testing=True --epochs=0
+# Train FC ReLU only:                           python3 main_torch.py --data_name=MNIST --model_type=ReLU --model_name=FC2 --epochs=1 --save=True 
+# Train FC SNN only (no conversion):            python3 main_torch.py --data_name=MNIST --model_type=SNN --model_name=FC2 --epochs=5 
+# Convert ANN-SNN, evaluate test with no train: python3 main_torch.py --data_name=MNIST --model_type=SNN --model_name=FC2 --load=True --testing=True --epochs=0 
 # Fine-tune SNN on ANN weights, evaluate test:  python3 main_torch.py --data_name=MNIST --model_type=SNN --model_name=FC2 --load=True --testing=True --epochs=1
         
 '''
@@ -223,7 +223,6 @@ if 'SNN' in args.model_type:
 ''' Make another forward pass post-training, log the input spike times and plot them '''
 # config_utils.logging.info("\n\n\n--- Attempt another forward pass ---\n")
 # model.eval()
-# model.collect_activations = True 
 # tuple = dataset.train_set.__getitem__(0)
 # x = tuple[0]
 # config_utils.logging.info(f"Shape of input x: {(x.shape)}")
@@ -232,9 +231,14 @@ if 'SNN' in args.model_type:
 
 if 'SNN' in args.model_type and model.N_layers >= 3:
     ''' Save activations from the above forward pass '''
-    # dump_path = args.logging_dir + 'outputs' + args.model_name + '_pass.npz'
-    # model.dump_activations(dump_path)
-    # model.collect_activations = False
+    model.collect_activations = True 
+    model.eval()
+    tuple = dataset.train_set.__getitem__(0)
+    x = tuple[0]
+    y = model(x)
+
+    dump_path = args.logging_dir + 'outputs' + args.model_name + '_pass.npz'
+    model.dump_activations(dump_path)
 
     ''' Plot the membrane potential and spike times for selected neurons as 
         they were produced in the above forward pass. '''
@@ -250,60 +254,61 @@ if 'SNN' in args.model_type and model.N_layers >= 3:
 
 
     ''' Attempt another forward pass on an MNIST image but also apply grayscale '''
-    model.collect_activations = True 
-    plotting.plot_input_tensor(x.view(28,28))
+    # model.collect_activations = True 
+    # plotting.plot_input_tensor(x.view(28,28))
 
-    img = x.clone()
+    # img = x.clone()
 
-    # Generate noise: values between -noise_level and 0
-    noise = -torch.rand_like(img) * 6.3  # Negative noise only
+    # # Generate noise: values between -noise_level and 0
+    # noise = -torch.rand_like(img) * 6.3  # Negative noise only
 
-    # Apply only to black pixels (value == 1.0)
-    black_mask = (img == 1.0)
-    img[black_mask] += noise[black_mask]
+    # # Apply only to black pixels (value == 1.0)
+    # black_mask = (img == 1.0)
+    # img[black_mask] += noise[black_mask]
 
-    img.clamp(0.0, 1.0)
-    print(img)
+    # img.clamp(0.0, 1.0)
+    # print(img)
 
-    plotting.plot_input_tensor(img.view(28,28))
+    # plotting.plot_input_tensor(img.view(28,28))
 
-    y = model(img)
-    config_utils.logging.info(f"Model output: {y}")
-    path = args.logging_dir + 'outputs/' + args.model_name + '_gray.npz'
-    model.dump_activations(path)
-    plotting.plot_membrane_potential_path(model, path, [294, 40,200])
-    plotting.plot_output_spikes(path, additional_title='\nSingle Forward Pass - Gray Noise')
+    # y = model(img)
+    # config_utils.logging.info(f"Model output: {y}")
+    # path = args.logging_dir + 'outputs/' + args.model_name + '_gray.npz'
+    # model.dump_activations(path)
+    # plotting.plot_membrane_potential_path(model, path, [294, 40,200])
+    # plotting.plot_output_spikes(path, additional_title='\nSingle Forward Pass - Gray Noise')
 
 
     ''' So far only the fully functional model has been tested. Now apply optimizations and experiments. '''
-    model.collect_activations = True 
-    train_torch.evaluate_FC_SNN(model, dataset.test_load)
-    unoptimized_activations = args.logging_dir + 'outputs/' + args.model_name + '_testing_unopt.npz'
-    model.dump_activations(unoptimized_activations)
-    model.collect_activations = False
-    plotting.plot_output_spikes(unoptimized_activations, log_scale=True, additional_title='\nNo optimizations')
+    # model.collect_activations = True 
+    # train_torch.evaluate_FC_SNN(model, dataset.test_load)
+    # unoptimized_activations = args.logging_dir + 'outputs/' + args.model_name + '_testing_unopt.npz'
+    # model.dump_activations(unoptimized_activations)
+    # model.collect_activations = False
+    # plotting.plot_output_spikes(unoptimized_activations, log_scale=True, additional_title='\nNo optimizations')
 
     ''' Apply optimizations '''
     config_utils.logging.info("\n\n### Apply optimizations to model ###")
-    model.collect_activations = True 
-    for q in range(1,6):
-        for i, layer in enumerate(model.hidden_layers):
-            latency_quantile = (100.0-q) / 100
-            layer.robustness_params['latency_quantiles'] = latency_quantile
-            config_utils.logging.info(f"### latency_quantiles={latency_quantile}")
-        
-        # Evaluate model again with new parameters 
-        train_torch.evaluate_FC_SNN(model, dataset.test_load)
+
+    # Apply latency quantiles aat 99%, ..., 95% - evaluate and save activations
+    for q in reversed(range(95,100)):
+        config_utils.logging.info(f"### Apply latency quantile q={q}%")
+        model.apply_max_quantiles(q)
+
+        # train_torch.evaluate_FC_SNN(model, dataset.test_load)
+        y = model(x)
         optimization_name = f'_{q}.npz'
         optimized_activations_path = args.logging_dir + 'outputs/' + args.model_name + optimization_name
         model.dump_activations(optimized_activations_path)
-        
+
+        for n, layer in enumerate(model.hidden_layers):
+            config_utils.logging.info(f"layer_{n}: t_max={layer.t_max}, t_max_q={layer.robustness_params['latency_quantiles'] * layer.t_max}")
     
-    for q in range(1,6):
-        latency_quantile = (100.0-q) / 100
+    # Plot activations after optimizations
+    for q in reversed(range(95,100)):
         optimization_name = f'_{q}.npz'
         optimized_activations_path = args.logging_dir + 'outputs/' + args.model_name + optimization_name
-        plotting.plot_output_spikes(optimized_activations_path, log_scale=True, additional_title=f'\n{str(latency_quantile)}')
+        plotting.plot_output_spikes(optimized_activations_path, log_scale=True, additional_title=f'\n{str(q)}')
 
 
 
