@@ -6,6 +6,7 @@ import numpy as np
 import config_utils
 import h5py
 import pickle
+from train_torch import evaluate_FC_SNN
 
 # import pdb   # debugger
 
@@ -14,6 +15,8 @@ import pickle
 '''
 
 def call_spiking(tj, W, D_i, t_min_prev, t_min, t_max, robustness_params):
+    # if config_utils.DEBUG_MODE:
+    #     breakpoint()
     # Calculate the spiking threshold (Eq. 18)
     threshold = t_max - t_min - D_i
     # Calculate output spiking time ti (Eq. 7)
@@ -120,20 +123,7 @@ class SpikingDenseTorch(nn.Module):
             self.alpha = self.D_i/(self.t_min-self.t_min_prev)
             ti = self.alpha * (self.t_min - self.t_min_prev) + W_mult_x
         
-        # save TI times per layer in the logs if debugging is enabled 
-        # skip output layer since no more spikes will be produced
-        if config_utils.DEBUG_MODE and not self.is_output:
-            # print("-----------------------------------------------------------------")
-            # config_utils.logging.info("Writing TI's outputs after call_spiking")
-            # config_utils.logging.info(ti.tolist())
-
-            filename = config_utils.LOGGING_DIR + 'spike_output.txt'
-            with open (filename, 'a+') as f:
-                f.write(' '.join(str(ti) for ti in ti.tolist()))        # convert tensor to list and separate values by a ' '
-                f.write('\n')
-
         return ti
-
 
 
 class FC_ReLU_torch(nn.Module):
@@ -229,8 +219,6 @@ class FC_SNN_torch(nn.Module):
         min_spike_times: collects the minimum spiking timestamp per individual layer for a single
             forward pass; it is reset after each forward() call and is used to update t_max in training
         
-
-    # TODO: define min_ti's as in tensorflow    
     
     '''
     def __init__(self, layers, N_hid, N_in, N_out, X_n, robustness_params, kernel_regularizer, kernel_initializer):
@@ -262,38 +250,13 @@ class FC_SNN_torch(nn.Module):
            layer.register_forward_hook(self.get_min_spiketime(layer_name))
            layer.register_forward_hook(self.get_activations(layer_name))
            
-
-        # Store the layer-wise spike-time outputs as a list of lists
-        self.layer_activations = [ np.empty([0]) for _ in range(len(self.hidden_layers)) ]
-        # self.list_activations = nn.Parameter
-        self.list_activations = [ [] for _ in range(len(self.hidden_layers))]
-
-
-        # Register hooks to capture activations
-        # self.activations = {f"layer_{i}": [] for i in range(len(self.hidden_layers))}
-        # for i, layer in enumerate(self.hidden_layers):
-          #  layer.register_forward_hook(self._create_hook_fn(f"layer_{i}"))
-
     def forward(self, x):
         ''' Defines the forward pass through the entire SNN architecture '''
         # breakpoint()
         for i, l in enumerate(self.hidden_layers):
             x = l(x)
-
-            # breakpoint()
-            ''' use: self.layer_activations[i] = np.append(self.layer_activations[i], x.flatten().detach().numpy()) '''
-            # self.list_activations[i].extend(x.flatten().detach().tolist())
-
-            # If DEBUG_MODE enabled log activations and further data
-            if config_utils.DEBUG_MODE:
-                self.layer_activations[i] = np.append(self.layer_activations[i], x.flatten().detach().numpy())
-                self.list_activations[i].extend(x.flatten().detach().tolist())
-
-
-
         x = self.output_layer(x)
         return x 
-
 
  
     def set_snn_intervals(self, t_min_start=0, t_max_start=1):
@@ -352,6 +315,7 @@ class FC_SNN_torch(nn.Module):
         '''
         with open(path, "wb") as f:
             pickle.dump(self.activations, f)
+        self.activations = {}
             
         # TODO: to ease saving/loading, construct the absolute constant path inside function
         # and pass the file name only as input. Same should change in plotting function
@@ -367,23 +331,29 @@ class FC_SNN_torch(nn.Module):
         for layer in self.hidden_layers:
             layer.robustness_params["latency_quantiles"] = quantile
         
+    def optimize_threshold(self, test_data):
+        '''
+            The model is evaluated on the test data; from this pass, the global minimum spike time 
+            across all samples is collected for each layer, which is used as a reference to shift the 
+            threshold and the intervals so that, with the shifted intervals, the first spike occurs
+            exactly at t_min (for the sample that produced the same global minimum)
 
-    
-    # def _create_hook_fn(self, layer_name):
-    #     ''' Creates a hook function for a specific layer '''
-    #     def hook_fn(module, input, output):
-    #         self.activations[layer_name].append(output.detach().cpu().numpy())
-    #     return hook_fn
-    
-    
-    # def save_activations(self, save_path):
-    #     ''' Saves activations to an HDF5 file '''
-    #     with h5py.File(save_path, 'w') as f:
-    #         for layer_name, activation_list in self.activations.items():
-    #             # Concatenate all activations for this layer
-    #             activations = np.concatenate(activation_list, axis=0)
-    #             f.create_dataset(layer_name, data=activations, dtype='float32')
-        
+        '''
+        self.min_spike_times = {}       # reset minimum spike times
+        self.collect_activations = False        # no need to collect activations during evaluation here
+        evaluate_FC_SNN(self, test_data)
+        config_utils.logging.info(f"Global minimum spike times for test_data: {self.min_spike_times}")
+
+        t_max_new = 1
+        for i, layer in enumerate(self.hidden_layers):
+            layer_name = f'layer_{i}'
+            layer.t_min=t_max_new
+            t_max_new = layer.t_max + layer.t_min - self.min_spike_times[layer_name]
+            layer.t_max=t_max_new
+
+        self.output_layer.t_min = t_max_new             # the output layer interval has a size of 1.5 by default
+        self.output_layer.t_max = t_max_new + 1.5
+
 
 def create_torch_fc_model_ReLU(layers=2, N_hid=340,N_in=784, N_out=10):
     ''' Returns instance of a fully-connected ReLU model '''

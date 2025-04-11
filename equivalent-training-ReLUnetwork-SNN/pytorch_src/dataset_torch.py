@@ -3,6 +3,7 @@ import torch
 import torch.utils
 from torchvision import datasets, transforms
 
+
 class Dataset_Torch:
     ''' Creates and returns train and test data, in the proper format, shape and values by importing from torch datasets
 
@@ -11,6 +12,7 @@ class Dataset_Torch:
         flatten: boolean, if True then the input tensor is flattened to fit the 1st layer
         ttfs_noise: TODO
         convert_ttfs: boolean flag, if True then the input pixel values are converted into TTFS spikes
+        add_image_noise: boolen flag, if True then random noise is added to the pixels 
         input_shape: shape of the original input
         train_sample: TODO
         q,p: normalization range (default: [0,1])
@@ -19,19 +21,28 @@ class Dataset_Torch:
         train_load, test_load: provides the respective DataLoader interface for accessing batches
     '''
 
-    def __init__(self, dataset_name, batch_size, flatten, convert_ttfs, ttfs_noise=0):
+    def __init__(self, dataset_name, batch_size, flatten, convert_ttfs, image_noise=False, ttfs_noise=0):
         self.name = dataset_name
         self.batch_size = batch_size
         self.flatten = flatten  
         self.ttfs_noise = ttfs_noise 
         self.convert_ttfs = convert_ttfs
-
+        self.image_noise = image_noise
         self.get_features_vectors()         # TODO: pass 'flatten' as a variable instead of setting it as an attribute (?)
         self.convert_ttfs = convert_ttfs
 
         self.train_load = torch.utils.data.DataLoader(self.train_set, batch_size=self.batch_size,shuffle=True)
         self.test_load = torch.utils.data.DataLoader(self.test_set, batch_size=self.batch_size,shuffle=False)
 
+    def add_strong_noise(self, x, enable=False):
+        if not enable:
+            return x
+        torch.manual_seed(0)       # for reproducibility
+        std=0.4
+        noise = torch.randn_like(x) * std
+        x_noisy = x + noise
+        return torch.clamp(x_noisy, 0.0, 1.0)  
+ 
       
     def get_features_vectors(self):
         """
@@ -59,7 +70,6 @@ class Dataset_Torch:
         
         def add_noise(x, noise):
             ''' Add random noise to the input of the test set '''
-
             x = x + torch.normal(mean=0.0, std=noise, size=x.shape)
             x = np.maximum(0, x)
             return x 
@@ -83,6 +93,7 @@ class Dataset_Torch:
                 # transforms.Lambda(lambda x: x.filter(ImageFilter.GaussianBlur(1))),
                 # transforms.RandomGrayscale(p=0.7),
                 transforms.ToTensor(),  # Converts (H, W) → (1, H, W) and normalizes to [0,1]
+                transforms.Lambda(lambda x: self.add_strong_noise(x, enable=self.image_noise)),
                 transforms.Lambda(lambda x: to_float_64(x)), 
                 transforms.Lambda(lambda x: conditional_flatten(x, self.flatten)),   # Re-shapes input tensors as needed
                 transforms.Lambda(lambda x: convert_ttfs_fun(x) if self.convert_ttfs else  x) 

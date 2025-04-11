@@ -79,7 +79,7 @@ dataset = Dataset_Torch(
     args.data_name,
     args.batch_size,
     flatten= ('FC' in args.model_name),
-    convert_ttfs = ('SNN' in args.model_type),   
+    convert_ttfs = ('SNN' in args.model_type),  
     ttfs_noise=args.noise,
 )
 
@@ -122,14 +122,15 @@ if args.load != 'False':
             model = create_torch_fc_model_SNN(X_n=X_n, layers=args.layers, robustness_params=robustness_params)
 
         # After creating model instance with new X_n ranges, load the weights
-        # if os.path.exists(args.logging_dir + 'model/full_snn_weights.pth'):
-            # config_utils.logging.info("### Loading full from-scratch SNN weights")
-            # load_path = args.logging_dir + 'model/full_snn_weights.pth'
-            # args.epochs=0
-            # args.testing=True
-        # else: 
+        if os.path.exists(args.logging_dir + 'full_snn_weights.pth'):
+            config_utils.logging.info("### Loading full SNN weights")
+            load_path = args.logging_dir + 'full_snn_weights.pth'
+            args.testing=True
+        else: 
             config_utils.logging.info("### Loading converted ANN weights")
             load_path = args.logging_dir + args.model_name + '_weights.pth'
+        
+        model.load_state_dict(torch.load(load_path, weights_only=True))
         config_utils.load_ANN_weights(model, load_path)
 
 
@@ -153,7 +154,16 @@ tuple = dataset.train_set.__getitem__(0)
 x = tuple[0]
 config_utils.logging.info(f"Shape of input x: {(x.shape)}")
 y = model(x)
-config_utils.logging.info(f"Model output: {y}")#
+config_utils.logging.info(f"Model output: {y}")
+
+image = x.view(28, 28)
+
+# Convert to numpy and plot
+plt.imshow(image.numpy(), cmap='gray')
+plt.title("28x28 Image from Flattened Tensor")
+plt.axis('off')
+plt.show()
+plotting.plot_input_tensor(image)
 
 
 ''' Make a test run on testset pre-training '''
@@ -199,7 +209,7 @@ if args.save == True:
         save_path = args.logging_dir + args.model_name + '_weights.pth'
         torch.save(model.state_dict(), save_path) 
 
-        # Preprocess ANN weights so that they can be used for the SNN conversion
+        # Preprocess ANN weights so that they can be used for the SNN conversion (-- only relevant for VGG model)
         # TODO ? 
 
         # Save the optimal X_n ranges as the maximum ReLU activations
@@ -208,8 +218,8 @@ if args.save == True:
         pkl.dump(X_n_list, open(args.logging_dir + '/' + args.model_name + '_X_n.pkl', 'wb'))
 
     if 'SNN' in args.model_type:
-        # save the SNN when trained fully from scratch to avoid re-training (this is NOT the ANN-SNN conversion step)
-        save_path = args.logging_dir + 'model/full_snn_weights.pth'
+        # save the SNN when trained to avoid re-training (this is NOT the ANN-SNN conversion step)
+        save_path = args.logging_dir + 'full_snn_weights.pth'
         config_utils.logging.info(f"### Saving model post-training to {save_path}")
         torch.save(model.state_dict(), save_path)   # save weights as dict rather than the entire model
 
@@ -230,20 +240,121 @@ if 'SNN' in args.model_type:
 # config_utils.logging.info(f"Model output: {y}")
 
 if 'SNN' in args.model_type and model.N_layers >= 3:
-    ''' Save activations from the above forward pass '''
+    ''' ------ Save activations from the above forward pass -------- '''
     model.collect_activations = True 
     model.eval()
     tuple = dataset.train_set.__getitem__(0)
     x = tuple[0]
     y = model(x)
 
-    dump_path = args.logging_dir + 'outputs' + args.model_name + '_pass.npz'
+    output_activations = model.activations['layer_1']
+    sorted_index_activations = np.argsort(output_activations)
+    min_spike_neuron_index = sorted_index_activations[0]
+    dump_path = args.logging_dir + 'outputs/' + args.model_name + '_pass.npz'
     model.dump_activations(dump_path)
+
+    
+    plotting.plot_membrane_potential_path(model, dump_path, [min_spike_neuron_index, 40,200], title_addition='Forward Pass - Unoptimized')
+    plotting.plot_output_spikes(dump_path, model=model, additional_title='\nForward Pass - Unoptimized')
+    
+    model.collect_activations = False 
+    print("\n### Accuracy without optimizations: ")
+    train_torch.evaluate_FC_SNN(model, dataset.test_load)
+    print(f"output_layer.t_min={model.output_layer.t_min}\n\n")
+    
+
+
+    ''' ----------  Apply latency quantiles optimization  ----------'''
+    # # Apply latency quantiles aat 99%, ..., 95% - evaluate and save activations
+    # for q in reversed(range(95,100)):
+    #     config_utils.logging.info(f"### Apply latency quantile q={q}%")
+    #     model.apply_max_quantiles(q)
+
+    #     #train_torch.evaluate_FC_SNN(model, dataset.test_load)
+    #     y = model(x)
+    #     optimization_name = f'_{q}.npz'
+    #     optimized_activations_path = args.logging_dir + 'outputs/' + args.model_name + optimization_name
+    #     model.dump_activations(optimized_activations_path)
+
+    #     for n, layer in enumerate(model.hidden_layers):
+    #         config_utils.logging.info(f"layer_{n}: t_max={layer.t_max}, t_max_q={layer.robustness_params['latency_quantiles'] * layer.t_max}")
+    
+    # # Plot activations after optimizations
+    # for q in reversed(range(95,100)):
+    #     optimization_name = f'_{q}.npz'
+    #     optimized_activations_path = args.logging_dir + 'outputs/' + args.model_name + optimization_name
+    #     plotting.plot_output_spikes(optimized_activations_path, model=model, additional_title=f'\n{str(q)}')
+
+
+    ''' ---------- Apply threshold optimization -------- '''
+    config_utils.logging.info("### Apply threshold adjustment optimization")
+    model.optimize_threshold(dataset.test_load)
+    config_utils.logging.info(f"### Model min_spike_times={model.min_spike_times}")
+    config_utils.logging.info("### Get intervals after optimizing")
+    for i, layer in enumerate(model.hidden_layers):
+        print(f"layer_{i}: t_min={layer.t_min} -- t_max={layer.t_max}")
+
+    # config_utils.DEBUG_MODE = True
+    model.collect_activations = True
+    y = model(x)
+    optimized_path = args.logging_dir + 'outputs/' + args.model_name + '_threshold.npz'
+    model.dump_activations(optimized_path)
+    print(model.activations)
+
+
+    # breakpoint()
+    plotting.plot_membrane_potential_path(model, optimized_path, [min_spike_neuron_index, 40,200], title_addition='Forward Pass - Threshold Opt.')
+    plotting.plot_output_spikes(optimized_path, model=model,additional_title='\nForward Pass - Threshold Opt.')
+
+    # Test accuracy again after optimizing
+    model.collect_activations = False   
+    print("\nAccuracy with threshold adjustment")    
+    evaluate_FC_SNN(model, dataset.test_load)
+    print(f"output_layer.t_min={model.output_layer.t_min}\n\n")
+
+
+    
+    ''' ------------ Reduce t_max ---------------'''
+    model.apply_max_quantiles(100)             # reset latency quantile
+
+    new_t_max = 1
+    for layer in model.hidden_layers:
+        print(f"current t_max={layer.t_max}, current t_min={layer.t_min}")
+        layer.t_min = new_t_max
+        new_t_max = 0.1 * layer.t_max 
+        layer.t_max = new_t_max
+        print(f"updated t_max={layer.t_max}, updated t_min={layer.t_min}")
+    model.output_layer.t_min=new_t_max
+    
+
+    model.collect_activations = True
+    y = model(x)
+    dump_path = args.logging_dir + 'outputs/' + args.model_name + '_shifted.npz'
+    model.dump_activations(dump_path)
+
+    plotting.plot_membrane_potential_path(model, dump_path, [min_spike_neuron_index, 40,200], title_addition='Forward Pass - Shifted t_max')
+    plotting.plot_output_spikes(dump_path, model=model, additional_title='\nForward Pass - Shifted t_max')
+
+    model.collect_activations = False
+    print("\nAccuracy with t_max shifting: ")
+    train_torch.evaluate_FC_SNN(model, dataset.test_load)
+    print(f"output_layer.t_min={model.output_layer.t_min}\n\n")
+
+    
+    for i in range (20):
+        data_label_tuple = dataset.test_set[i]
+        x = data_label_tuple[0]
+        y = model(x)
+        y_predicted = torch.argmax(y)
+        y_correct = data_label_tuple[1]
+        print(f"y_pred={y_predicted} - y_corr={y_correct}")
+
+
+    # config_utils.DEBUG_MODE = True
+    # evaluate_FC_SNN(model, dataset.test_load)
 
     ''' Plot the membrane potential and spike times for selected neurons as 
         they were produced in the above forward pass. '''
-    # with open(dump_path, "rb") as f:
-    #     activations = pickle.load(f)
     
     # output_activations = activations['layer_1']
     # sorted_index_activations = np.argsort(output_activations)
@@ -287,28 +398,28 @@ if 'SNN' in args.model_type and model.N_layers >= 3:
     # model.collect_activations = False
     # plotting.plot_output_spikes(unoptimized_activations, log_scale=True, additional_title='\nNo optimizations')
 
-    ''' Apply optimizations '''
-    config_utils.logging.info("\n\n### Apply optimizations to model ###")
+    # ''' Apply optimizations '''
+    # config_utils.logging.info("\n\n### Apply optimizations to model ###")
 
-    # Apply latency quantiles aat 99%, ..., 95% - evaluate and save activations
-    for q in reversed(range(95,100)):
-        config_utils.logging.info(f"### Apply latency quantile q={q}%")
-        model.apply_max_quantiles(q)
+    # # Apply latency quantiles aat 99%, ..., 95% - evaluate and save activations
+    # for q in reversed(range(95,100)):
+    #     config_utils.logging.info(f"### Apply latency quantile q={q}%")
+    #     model.apply_max_quantiles(q)
 
-        # train_torch.evaluate_FC_SNN(model, dataset.test_load)
-        y = model(x)
-        optimization_name = f'_{q}.npz'
-        optimized_activations_path = args.logging_dir + 'outputs/' + args.model_name + optimization_name
-        model.dump_activations(optimized_activations_path)
+    #     # train_torch.evaluate_FC_SNN(model, dataset.test_load)
+    #     y = model(x)
+    #     optimization_name = f'_{q}.npz'
+    #     optimized_activations_path = args.logging_dir + 'outputs/' + args.model_name + optimization_name
+    #     model.dump_activations(optimized_activations_path)
 
-        for n, layer in enumerate(model.hidden_layers):
-            config_utils.logging.info(f"layer_{n}: t_max={layer.t_max}, t_max_q={layer.robustness_params['latency_quantiles'] * layer.t_max}")
+    #     for n, layer in enumerate(model.hidden_layers):
+    #         config_utils.logging.info(f"layer_{n}: t_max={layer.t_max}, t_max_q={layer.robustness_params['latency_quantiles'] * layer.t_max}")
     
-    # Plot activations after optimizations
-    for q in reversed(range(95,100)):
-        optimization_name = f'_{q}.npz'
-        optimized_activations_path = args.logging_dir + 'outputs/' + args.model_name + optimization_name
-        plotting.plot_output_spikes(optimized_activations_path, log_scale=True, additional_title=f'\n{str(q)}')
+    # # Plot activations after optimizations
+    # for q in reversed(range(95,100)):
+    #     optimization_name = f'_{q}.npz'
+    #     optimized_activations_path = args.logging_dir + 'outputs/' + args.model_name + optimization_name
+    #     plotting.plot_output_spikes(optimized_activations_path, log_scale=True, additional_title=f'\n{str(q)}')
 
 
 
