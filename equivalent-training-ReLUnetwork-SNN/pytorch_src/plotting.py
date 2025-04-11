@@ -4,12 +4,14 @@ from model_torch import compute_membrane_potential
 import matplotlib.pyplot as plt 
 import matplotlib.cm as cm
 import matplotlib.gridspec as gridspec
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 import config_utils
 import os 
 from model_torch import *
 from train_torch import * 
 import dataset_torch
 import pickle as pkl 
+from torchvision import datasets, transforms
 
 def plot_membrane_potential(model, target_neurons, title_addition=''):
     '''
@@ -269,10 +271,15 @@ def plot_membrane_potential_path(model, data_path, target_neurons, title_additio
 
     
 
-def plot_output_spikes(data_path, log_scale=False, additional_title=''):
+def plot_output_spikes(data_path, model=None, log_scale=False, additional_title=''):
     ''' Make a histogram plot to visualize the distribution of the input spike times layer-wise
         Requires a .npz file at 'data_path' with the logged spike times in a dict format, where 
         the keys correspond to a layer number such as 'layer_i' and the values in list format.
+        #TODO: put model as 1st parameter and change function calls in main
+
+        In case you see no spikes at all or spikes at unexpected times, make sure to 
+        check that 'model.collect_activations' is being correctly set to True/False at any point
+        where a forward pass might happen (training, evaluating, inference)
     '''
     if not os.path.isfile(data_path):
         config_utils.logging.info("### Could not find any logged files for plotting spike times - generate one first ###")
@@ -281,6 +288,7 @@ def plot_output_spikes(data_path, log_scale=False, additional_title=''):
     with open(data_path, "rb") as f:
         activations = pickle.load(f)
     
+    # --- Layer-wise distributions
     total = 0
     plt.figure(figsize=(10, 5))
     for k,v in activations.items():
@@ -288,11 +296,21 @@ def plot_output_spikes(data_path, log_scale=False, additional_title=''):
         activations_np = np.round(np.array(v),decimals=2)
         plt.hist(activations_np, bins=40, label=k, log=log_scale)
         total += len(activations_np)
-    plt.title(f'Layer-wise Spike Time Distribution - N={total}' + additional_title)
 
+    # --- interval boundaries
+    if model:
+        for i, layer in enumerate(model.hidden_layers):
+            t_min = layer.t_min
+            t_max=layer.t_max
+            plt.axvline(x=t_min, color='r', linestyle='--', linewidth=1, alpha=0.7)
+            plt.axvline(x=t_max, color='r', linestyle='--', linewidth=1, alpha=0.7)
+            plt.text(t_min + 0.2, plt.ylim()[1]*0.9, '', va='top')
+    
+    plt.title(f'Layer-wise Spike Time Distribution - N={total}' + additional_title)
     plt.xlabel('Spike Time Activation')
     plt.ylabel('Frequency')
-    plt.legend()
+    plt.xlim(0, None)
+    plt.legend(loc='upper left')
     plt.show()
 
 
@@ -303,6 +321,42 @@ def plot_input_tensor(t):
     plt.show()
 
 
+def plot_input_spikes(input_tensor):
+    plt.figure(figsize=(10, 5))
+    plt.hist(input_tensor, bins=20)
+    plt.title(f'Distribution of Input Tensor Spikes')
+    plt.xlabel('Spike Time')
+    plt.ylabel('Frequency')
+    plt.legend()
+    plt.show()
+
+def plot_MNIST_tensor(original_image, tensor_input, label):
+    if (original_image.shape[0]==1):
+            original_image = original_image.squeeze()
+
+    if (tensor_input.shape != (28,28)):
+        if (tensor_input.shape[0]==1):
+            tensor_input = tensor_input.squeeze()
+        tensor_image = tensor_input.view(28,28)    
+    fig, ax = plt.subplots(1, 2, figsize=(10, 5), gridspec_kw={'width_ratios': [1, 1]})
+
+    # Plot original image
+    im0 = ax[0].imshow(original_image, cmap='gray', aspect='equal')
+    ax[0].set_title("Original MNIST image")
+    ax[0].axis('off')
+
+    # Plot processed image
+    im1 = ax[1].imshow(tensor_image, cmap='gray_r', aspect='equal')  
+    ax[1].set_title("TTFS Conversion- Heatmap")
+
+    divider = make_axes_locatable(ax[1])
+    cax = divider.append_axes("right", size="5%", pad=0.2)
+    cbar = fig.colorbar(im1, cax=cax)
+    cbar.set_label("Spike Time")
+
+    # plt.tight_layout()
+    fig.suptitle(f"Label: {label}", fontsize=14)
+    plt.show()
 
 
 
@@ -323,58 +377,78 @@ def main():
     data_name = 'MNIST'
     batch_size = 8
     model_name = 'FC2'
+    model_name = data_name + '-' + model_name
     model_type = 'SNN'
+    add_image_noise = False
 
     # Get Data Loaders
     dataset = dataset_torch.Dataset_Torch(
         data_name,
         batch_size,
         flatten= ('FC' in model_name),
+        image_noise=add_image_noise,
         convert_ttfs = ('SNN' in model_type),   
     )
+
+    # Also import the original dataset to get the input images without TTFS conversion - optionally, apply noise to the original images
+    noise_transforms = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Lambda(lambda x: dataset.add_strong_noise(x, enable=add_image_noise))
+    ])
+    image_dataset = datasets.MNIST(root='./datasets/MNIST', train=True, download=True, transform=noise_transforms)
 
     # Setup logging
     logging_dir = './logs/'
     config_utils.set_up_logging(logging_dir, model_name)
 
     # Get X_n ranges if available
+    print(f"### X_n path={logging_dir + model_name + '_X_n.pkl'}")
     if os.path.exists(logging_dir + model_name + '_X_n.pkl'):
         X_n = pkl.load(open(logging_dir + model_name + '_X_n.pkl', 'rb'))
+        config_utils.logging.info(f"### Loading X_n ranges from ANN - X_n={X_n}")
+
     else:
         X_n = [10,50] 
+        config_utils.logging.info(f"### Loading default X_n - X_n={X_n}")
 
     # Get model instance
     model = create_torch_fc_model_SNN(X_n=X_n, layers=N_layers, robustness_params=robustness_params)
     print(model)
 
     # Load SNN weights directly if available
-    if os.path.exists(logging_dir + 'model/full_snn_weights.pth'):
+    if os.path.exists(logging_dir + 'full_snn_weights.pth'):
         config_utils.logging.info("### Loading full from-scratch SNN weights")
-        load_path = logging_dir + 'model/full_snn_weights.pth'
+        load_path = logging_dir + 'full_snn_weights.pth'
         model.load_state_dict(torch.load(load_path, weights_only=True))
         model.eval()
     else: 
-        config_utils.loggin.info("### Cannot find pre-trained SNN model. Train SNN first and save. Try:\n " \
+        config_utils.logging.info("### Cannot find pre-trained SNN model. Train SNN first and save. Try:\n " \
         "python3 main_torch.py --data_name=MNIST --model_type=SNN --model_name=FC2_10  --testing=True --epochs=3 --layers=3 --save=True") # TODO 
         exit(1)
 
     # Setup model parameters
     model.set_snn_intervals(0,1)
+    for i,layer in enumerate(model.hidden_layers):
+        print(f"layer_{i}: t_min={layer.t_min} -- t_max={layer.t_max}")
 
     # Try forward pass
-    tuple = dataset.train_set.__getitem__(0)
-    x = tuple[0]
+    model.collect_activations = True
+    original_image, label = image_dataset[0]
+    x, label = dataset.train_set[0]
     config_utils.logging.info(f"Shape of input x: {(x.shape)}")
     y = model(x)
     config_utils.logging.info(f"Model output: {y}")
 
+    plot_MNIST_tensor(original_image, x, label)
+    plot_input_spikes(x)
+
+    act_path = logging_dir + 'outputs/' + model_name + '_plotting.npz'
+    model.dump_activations(act_path)
+    plot_output_spikes(act_path, model=model)
+
     # Validate on testset
     config_utils.logging.info("Evaluation on testset")
     evaluate_FC_SNN(model, dataset.test_load)
-
-    # 
-
-
 
 
     return 0
