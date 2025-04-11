@@ -64,7 +64,7 @@ class SpikingConv2D(tf.keras.layers.Layer):
         self.initializer = kernel_initializer
         self.B_n = (1 + 0.5) * X_n
         self.t_min_prev, self.t_min, self.t_max=0, 0, 1
-        self.robustness_params=robustness_params['time_bits']
+        self.robustness_params=robustness_params
         self.alpha = tf.cast(tf.fill((filters, ), 1), dtype=tf.float64)
         super(SpikingConv2D, self).__init__(name=name)
     
@@ -103,7 +103,7 @@ class SpikingConv2D(tf.keras.layers.Layer):
         if self.padding=='valid' or self.BN!=1 or self.BN_before_ReLU==1: 
             # In this case the threshold is the same for whole input image.
             tj = tf.reshape(tj, (-1, tf.shape(W)[0]))
-            ti = call_spiking(tj, W, self.D_i[0], self.t_min_prev, self.t_min, self.t_max, noise=self.noise)
+            ti = call_spiking(tj, W, self.D_i[0], self.t_min_prev, self.t_min, self.t_max, self.robustness_params)
             # Layer output is reshaped back.
             if self.padding=='valid':
                 ti = tf.reshape(ti, (-1, image_valid_size, image_valid_size, self.filters))
@@ -116,7 +116,7 @@ class SpikingConv2D(tf.keras.layers.Layer):
             for i, tj_part in enumerate(tj_partitioned):
                 # Iterate over 9 different partitions and call call_spiking with different threshold value.
                 tj_part = tf.reshape(tj_part, (-1, tf.shape(W)[0]))
-                ti_part = call_spiking(tj_part, W, self.D_i[i], self.t_min_prev, self.t_min, self.t_max, noise=self.noise)
+                ti_part = call_spiking(tj_part, W, self.D_i[i], self.t_min_prev, self.t_min, self.t_max, self.robustness_params)
                 # Partitions are reshaped back.
                 if i==0: ti_part=tf.reshape(ti_part, (-1, image_valid_size, image_valid_size, self.filters))
                 if i in [1, 3, 5, 7]: ti_part=tf.reshape(ti_part, (-1, 1, 1, self.filters))
@@ -355,7 +355,7 @@ def call_spiking(tj, W, D_i, t_min_prev, t_min, t_max, robustness_params):
         print("D_i=", D_i)
         print("threshold= ",tf.get_static_value(threshold))
         # logging.info("Weight W=", tf.get_static_value(W))
-        breakpoint()
+        # breakpoint()
     # Calculate output spiking time ti (Eq. 7)
     ti = (tf.matmul(tj-t_min, W) + threshold + t_min)
     # Ensure valid spiking time. Do not spike for ti >= t_max.
