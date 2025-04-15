@@ -79,7 +79,7 @@ dataset = Dataset_Torch(
     args.data_name,
     args.batch_size,
     flatten= ('FC' in args.model_name),
-    convert_ttfs = ('SNN' in args.model_type),  
+    convert_ttfs = ('SNN' in args.model_type),   
     ttfs_noise=args.noise,
 )
 

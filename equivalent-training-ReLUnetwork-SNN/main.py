@@ -28,7 +28,7 @@ parser.add_argument('--lr', type=float, default=0.0005, help='Learning rate')
 parser.add_argument('--batch_size', type=int, default=8, help='Batch size')
 parser.add_argument('--epochs', type=int, default=10, help='Epochs. 0 -skip training')
 parser.add_argument('--layers', type=int, default=2, help='Number of layers in FC model')
-parser.add_argument('--testing', type=strtobool, default=True, help='Execute testing.')
+parser.add_argument('--testing', type=strtobool, default=False, help='Execute testing.')
 parser.add_argument('--load', type=str, default='False', help='Load before training. (True|False|custom_name.h5)')
 parser.add_argument('--save', type=strtobool, default=False, help='Store after training.')
 parser.add_argument('--train_shift', type=strtobool, default=True, help='Re-calculate interval boundaries during training.')
@@ -116,7 +116,7 @@ if args.load != 'False':
             logging.info("### Found X_n ranges from ANN conversion")
             X_n=pkl.load(open(args.logging_dir + args.model_name + '_X_n.pkl', 'rb'))
         else:
-            X_n = 1000
+            X_n = [10,50]
         if 'FC2' in args.model_name:
             logging.info(f"### Create new FC instance with loaded X_n = {X_n} ###\n")
             model = create_fc_model_SNN(layers=args.layers, optimizer=optimizer, X_n=X_n, robustness_params=robustness_params)
@@ -124,17 +124,18 @@ if args.load != 'False':
             logging.info(f"### Create new VGG instance with loaded X_n = {X_n} ###\n")
             model = create_vgg_model_SNN(layers2D, kernel_size, layers1D, data, optimizer, X_n=X_n, robustness_params=robustness_params,
                                      kernel_regularizer=regularizer, kernel_initializer=initializer)
-            
+        
         # check if a fully-trained SNN model exists
-        fully_trained_SNN = False
-        for filename in os.listdir(args.logging_dir):
-            if filename.endswith('_full_SNN_weights.h5'):
-                fully_trained_SNN = True 
-                model.load_weights(args.logging_dir + filename)
-        if not fully_trained_SNN:
+        if os.path.exists(args.logging_dir + '/' + args.model_name + '_full_SNN_weights.h5'):
+            model.load_weights(args.logging_dir + '/' + args.model_name + '_full_SNN_weights.h5', by_name=True)
+        # check if a convertible ANN model exists
+        elif os.path.exists(args.logging_dir + args.model_name + '_preprocessed.h5'):
             model.load_weights(args.logging_dir + args.model_name + '_preprocessed.h5', by_name=True)
-        else:
+        else: 
             logging.info("### !! There are no pre-trained weights to load for the SNN !!")
+            exit(1)
+
+
 
 if 'SNN' in args.model_type:
     # Register SNN interval boundaries at initialization before training
@@ -145,14 +146,8 @@ if 'SNN' in args.model_type:
             t_min, t_max = layer.set_params(t_min, t_max)
             logging.info(f"layer_{n}: set t_min={layer.t_min}, t_max={layer.t_max}, B_n={layer.B_n}")
     logging.info("\n\n")
-    '''
-    if args.load == True:
-        logging.info("### Loading SNN FULL weights ###")
-        model.load_weights(args.logging_dir + args.model_name + '_weights.h5', by_name=True)
-    '''
-            
-
-# if args.testing:
+   
+# if args.testing != False:
 #     logging.info("#### Initial test set accuracy testing ####")
 #     test_acc = model.evaluate(data.x_test, data.y_test, batch_size=args.batch_size)
 #     logging.info("Initial testing accuracy is {}.".format(test_acc))
@@ -327,65 +322,112 @@ if 'SNN' in args.model_type:
 
 
     ''' Apply layer-wise threshold adjustment '''
-    logging.info("#### Apply threshold adjustment ####")
-    # First, make a pass over the testset: extract the global minimum spike time per layer
-    spike_times = []
-    for k, layer in enumerate(model.layers):
-        if 'conv' in layer.name or 'dense' in layer.name:
-            spike_times.append(layer.output)
+    logging.info("####\n\n Apply threshold adjustment ####")
 
-    extractor = tf.keras.Model(inputs=model.inputs, outputs=spike_times)
-    layer_outputs = extractor.predict(data.x_test, batch_size=32, verbose=1)
-    
-    # Global minimum spike times
-    min_spikes = [np.min(layer_output) for layer_output in layer_outputs]
-    print(f"--- Extracted min_spike times: {min_spikes} ---")
+    # Check if the min_spikes have already been extracted before - if yes, load those
+    if os.path.exists(args.logging_dir + '/' + args.model_name + '_min_spikes.pkl'):
+        global_minima = pkl.load(open(args.logging_dir + '/' + args.model_name + '_min_spikes.pkl', 'rb'))
+    else: 
+        # Extract the min_spikes and save them
+        # First, make a pass over the testset: extract the global minimum spike time per layer
+        min_spike_times = []
+        for k, layer in enumerate(model.layers):
+            if 'conv' in layer.name or 'dense' in layer.name:
+                min_spike_times.append(tf.reduce_min(layer.output))
 
-    # Plot layer-wise activations
-    for i in range(len(layer_outputs)):
-        output_flat = layer_outputs[i].flatten()  
-        # output_filter = output_flat[output_flat < t_max_layer] 
-        output_filter = output_flat
-        plt.hist(output_filter, bins=20, alpha=0.5)
+        extractor = tf.keras.Model(inputs=model.inputs, outputs=min_spike_times)
+        min_layer_outputs = extractor.predict(data.x_test, batch_size=8, verbose=1)
+        
+        # Global minimum spike times
+        global_minima = list(map(lambda x: np.max(x), min_layer_outputs))
+        print(f"--- Extracted min_spike times: {global_minima} ---")
+        pkl.dump(global_minima, open(args.logging_dir + '/' + args.model_name + '_min_spikes.pkl', 'wb'))
 
     # Apply threshold modification
     t_max_new = 1
-    for k, layer in enumerate(model.layers):
+    k = 0
+    for layer in model.layers:
         if 'conv' in layer.name or 'dense' in layer.name:
-            print("--- prev: t_min={layer.t_min}  - t_max={layer.t_max}")
+            logging.info(f"--- prev: t_min={layer.t_min}  - t_max={layer.t_max}")
             layer.t_min.assign(t_max_new)
-            t_max_new = layer.t_max + layer.t_min - min_spikes[k]
+            t_max_new = layer.t_max + layer.t_min - global_minima[k]
             layer.t_max.assign(t_max_new)
-            print(f"--- new : t_min={layer.t_min} - t_max={layer.t_max}")
+            logging.info(f"--- new : t_min={layer.t_min} - t_max={layer.t_max}")
+            k+=1
+    
+    # if args.testing != False:
+    #     # Re-evaluate accuracy
+    #     logging.info("--- Accuracy after threshold adjustment: ")
+    #     test_acc = model.evaluate(data.x_test, data.y_test, batch_size=args.batch_size)
+    #     logging.info("--- Adjusted threshold - testing accuracy is {} ---".format(test_acc))
 
-    # Re-evaluate accuracy
-    print("--- Accuracy after threshold adjustment: ")
-    test_acc = model.evaluate(data.x_test, data.y_test, batch_size=args.batch_size)
-    logging.info("--- Final testing accuracy is {} ---".format(test_acc))
 
-    # Re-plot adjusted activations
+    # Re-plot adjusted activations for a single pass
     spike_times_adjusted = []
     for k, layer in enumerate(model.layers):
         if 'conv' in layer.name or 'dense' in layer.name:
             spike_times_adjusted.append(layer.output)
 
     extractor = tf.keras.Model(inputs=model.inputs, outputs=spike_times_adjusted)
-    layer_outputs_adjusted = extractor.predict(data.x_test, batch_size=32, verbose=1)
+    layer_outputs_adjusted = extractor.predict(x_expanded, verbose=1)
 
     for i in range(len(layer_outputs_adjusted)):
         output_flat = layer_outputs_adjusted[i].flatten()  
         # output_filter = output_flat[output_flat < t_max_layer] 
         output_filter = output_flat
-        plt.hist(output_filter, bins=20, alpha=0.5)
+        plt.hist(output_filter, bins=100, alpha=0.5)
+
+    t_max_layer_before = t_max_layer
+    plt.title('Layer-wise Adjusted Activations - CIFAR10 VGG16 Inference')
+    plt.xlabel('Spiking Time')
+    plt.ylabel('Frequency')
+    plt.grid(True)
+    plt.show()
 
 
+    # ------------------------------------------------------------------------------------------------------------------ # 
+    # ### Apply 2nd optimization: interval overlapping by shifting t_max
+    logging.info("\n\n Apply interval overlapping optimization")
+    new_t_max = 1
+    for layer in model.layers:
+        if 'conv' in layer.name or 'dense' in layer.name:
+            logging.info(f"--prev t_min={layer.t_min} - t_max={layer.t_max}")
+            layer.t_min = new_t_max
+            new_t_max = 0.5 * layer.t_max 
+            layer.t_max = new_t_max
+            logging.info(f"-- new t_min={layer.t_min} - t_max={layer.t_max}")
+        
+
+    # Evaluate testset with overlap
+    if args.testing != False:
+        logging.info("--- Accuracy after interval overlap adjustment: ")
+        test_acc = model.evaluate(data.x_test, data.y_test, batch_size=args.batch_size)
+        logging.info("--- Overlapping Intervals - testing accuracy is {} ---".format(test_acc))
+
+    # Make a forward pass
+    spike_times_overlap = []
+    for k, layer in enumerate(model.layers):
+        if 'conv' in layer.name or 'dense' in layer.name:
+            spike_times_overlap.append(layer.output)
+
+    extractor = tf.keras.Model(inputs=model.inputs, outputs=spike_times_overlap)
+    layer_outputs_overlap = extractor.predict(x_expanded, verbose=1)
+
+    for i in range(len(layer_outputs_overlap)):
+        output_flat = layer_outputs_overlap[i].flatten()  
+        # output_filter = output_flat[output_flat < t_max_layer] 
+        output_filter = output_flat
+        plt.hist(output_filter, bins=100, alpha=0.5)
+
+    plt.title('Layer-wise Overlapping Activations - CIFAR10 VGG16 Inference')
+    plt.xlabel('Spiking Time')
+    plt.ylabel('Frequency')
+    plt.grid(True)
+    plt.show()
 
 
-
-
-
-print(y)
-print(data.y_train[0])
+logging.info(y)
+logging.info(data.y_train[0])
 
 
 
