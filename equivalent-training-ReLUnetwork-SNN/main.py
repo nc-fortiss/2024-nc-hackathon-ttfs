@@ -102,6 +102,9 @@ if model is None:
 model.summary()
 model.last_dense = list(filter(lambda x : 'dense' in x.name, model.layers))[-1]
 
+
+
+
 if args.load != 'False':
     logging.info("#### Loading weights ####")
     if 'ReLU' in args.model_type:
@@ -217,12 +220,18 @@ plt.show()
 
 spike_times, t_max_values = [], []
 model = tf.keras.Model(inputs=model.inputs, outputs=model.outputs[0])
-for layer in model.layers:
-    if isinstance(layer, (SpikingDense, SpikingConv2D)):
-        spike_times.append(layer.output)
-        t_max_values.append(layer.t_max)
+layer_names = []
+for k, layer in enumerate(model.layers):
+
+    if 'conv2d' in layer.name or 'dense' in layer.name:
+        if k!=len(model.layers)-2:
+            spike_times.append(layer.output)
+            t_max_values.append(layer.t_max)
+            layer_names.append(layer.name)
+        
 model.compile(metrics=["categorical_accuracy"], loss=tf.keras.losses.CategoricalCrossentropy(from_logits=True),
-                optimizer=optimizer)
+                optimizer=optimizer)    
+
 
 extractor_spks = tf.keras.Model(inputs=model.inputs, outputs=spike_times)
 output_intermediate_spikes = extractor_spks.predict(x_expanded, verbose=1)
@@ -237,14 +246,19 @@ if output_intermediate_spikes is None:
 for i in range(len(output_intermediate_spikes)):
     t_max_layer = t_max_values[i].numpy()
     output_flat = output_intermediate_spikes[i].flatten()
-    output_flat = output_flat[output_flat < t_max_layer]
+    # output_flat = output_flat[output_flat < t_max_layer]
     # Plot the combined histogram
-    plt.hist(output_flat, bins=100)
+    if i == 13: break
+    output_shape = output_flat.shape[0]
+    plt.hist(output_flat, bins=10, density=True, label=f'{layer_names[i]} - N={output_shape}')
 
-t_max_layer_before = t_max_layer
+    print(f"--- {layer.name} ---")
+    print(f"--- mean={np.mean(output_flat)}; min={np.min(output_flat)}; max={np.max(output_flat)}")
+
 plt.title('Layer-wise Activations - CIFAR10 VGG16 Inference')
 plt.xlabel('Spiking Time')
 plt.ylabel('Frequency')
+plt.legend(loc='upper left')
 plt.grid(True)
 plt.show()
 
@@ -293,6 +307,7 @@ if args.save and 'ReLU' in args.model_type:
     logging.info('calculating maximum layer output...')
     layer_num, X_n = 0, []
     layers_max = []
+    layers_min = []     # also track the minimum spike times to crop the intervals later in the SNN
     for k, layer in enumerate(model.layers):
         if 'conv' in layer.name or 'dense' in layer.name:
             if k!=len(model.layers)-2:
@@ -343,7 +358,7 @@ if 'SNN' in args.model_type:
         print(f"--- Extracted min_spike times: {global_minima} ---")
         pkl.dump(global_minima, open(args.logging_dir + '/' + args.model_name + '_min_spikes.pkl', 'wb'))
 
-    # Apply threshold modification
+    # Apply threshold modificationa
     t_max_new = 1
     k = 0
     for layer in model.layers:
