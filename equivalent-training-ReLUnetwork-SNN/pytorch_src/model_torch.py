@@ -145,6 +145,8 @@ class FC_ReLU_torch(nn.Module):
         self.N_in = N_in 
         self.N_out = N_out 
         self.N = lambda l: (N_hid[l-1] if type(N_hid)==list else N_hid)
+        self.collect_activations = False 
+        
 
         # Dynamically adjust the configuration of hidden layers based on input.
         # The definition of an Input() dummy tensor as done in the tensorflow implementation can be skipped; here the first hidden layer is created directly
@@ -168,9 +170,11 @@ class FC_ReLU_torch(nn.Module):
 
         # Register forward hooks on each hidden layer
         self.max_activations = {}
+        self.all_activations = {}
         for i, layer in enumerate(self.hidden_layers[:-1]):
            layer_name = f"layer_{i}"
            layer.register_forward_hook(self.get_max_activation(layer_name))
+           layer.register_forward_hook(self.get_activations(layer_name))
 
     def forward(self,x):
         # Skip ReLU on the output layer
@@ -203,6 +207,20 @@ class FC_ReLU_torch(nn.Module):
                 self.max_activations[name] = max(self.max_activations[name], batch_max)
 
         return hook
+    
+    def get_activations(self, layer_name):
+        '''
+            Collects the activations from the outputs of each layer. 
+            @layer_name: string, name of the layer
+        '''
+        def hook(model, input, output):
+            # Collect the output spikes time during a forward call
+            if self.collect_activations:
+                if layer_name not in self.all_activations:
+                    self.all_activations[layer_name] = []     
+                self.all_activations[layer_name].extend(output.flatten().detach().cpu().tolist())
+        return hook
+
 
 class FC_SNN_torch(nn.Module):
     ''' Defines instance of a fully-connected SNN model

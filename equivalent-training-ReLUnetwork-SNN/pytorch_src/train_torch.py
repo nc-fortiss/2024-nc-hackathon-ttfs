@@ -83,6 +83,7 @@ def evaluate_FC_SNN(model, test_loader):
     test_loss /= len(test_loader)
 
     config_utils.logging.info(f"--- Test Accuracy: {accuracy:.2f}% | Test Loss: {test_loss:.4f} ---")
+    return [accuracy, test_loss]
 
 
 def train_FC_ReLU(model,train_data, optimizer,loss_criterion,epochs=5):

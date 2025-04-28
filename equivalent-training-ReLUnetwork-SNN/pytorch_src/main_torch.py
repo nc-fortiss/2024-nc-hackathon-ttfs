@@ -79,16 +79,17 @@ dataset = Dataset_Torch(
     args.data_name,
     args.batch_size,
     flatten= ('FC' in args.model_name),
-    convert_ttfs = ('SNN' in args.model_type),   
+    convert_ttfs = ('SNN' in args.model_type), 
+    image_noise=False,                                                                      # noise argument 
     ttfs_noise=args.noise,
 )
 
 ''' Instantiate model '''
-
+X_n = [5.43, 4.5, 6.7]
 model = None 
 if 'SNN' in args.model_type:
     config_utils.logging.info("### Create instance of FC_SNN: ###\n")
-    model = create_torch_fc_model_SNN(X_n=10, layers=args.layers, robustness_params=robustness_params)
+    model = create_torch_fc_model_SNN(X_n=X_n, layers=args.layers, robustness_params=robustness_params)
 elif 'ReLU' in args.model_type: 
     config_utils.logging.info("### Create instance of FC_ReLU: ###\n")
     model = create_torch_fc_model_ReLU(layers=args.layers)
@@ -100,6 +101,7 @@ if model is None:
 config_utils.logging.info(model)
 config_utils.logging.info("\n") 
 
+config_utils.TRAIN_SHIFT = False
 
 ''' Load pre-trained weights as needed (pass --load=True or --load==custom_name)'''
 if args.load != 'False':
@@ -112,26 +114,29 @@ if args.load != 'False':
             model.load_weights(args.logging_dir + args.load, by_name=True)
     if 'SNN' in args.model_type:
         # Load X_n ranges from pre-trained ANN, if available
+        if os.path.exists(args.logging_dir + args.model_name + '_SNN_X_n.pkl'):
+            X_n = pkl.load(open(args.logging_dir + args.model_name + '_SNN_X_n.pkl', 'rb'))
+            config_utils.logging.info(f"### Loading X_n ranges from SNN - X_n={X_n}")
+
         if os.path.exists(args.logging_dir + args.model_name + '_X_n.pkl'):
             X_n = pkl.load(open(args.logging_dir + args.model_name + '_X_n.pkl', 'rb'))
         else:
-            X_n = [10,50] 
+            X_n = [5.43, 4.5, 6.7] 
 
         if 'FC2' in args.model_name:
             config_utils.logging.info(f"### Create new SNN model instance with loaded X_n = {X_n} ###\n")
             model = create_torch_fc_model_SNN(X_n=X_n, layers=args.layers, robustness_params=robustness_params)
 
         # After creating model instance with new X_n ranges, load the weights
-        if os.path.exists(args.logging_dir + 'full_snn_weights.pth'):
+        if os.path.exists(args.logging_dir + args.model_name + '_full_snn_weights.pth'):
             config_utils.logging.info("### Loading full SNN weights")
-            load_path = args.logging_dir + 'full_snn_weights.pth'
+            load_path = args.logging_dir + args.model_name + '_full_snn_weights.pth'
             args.testing=True
+            model.load_state_dict(torch.load(load_path, weights_only=True))
         else: 
             config_utils.logging.info("### Loading converted ANN weights")
             load_path = args.logging_dir + args.model_name + '_weights.pth'
-        
-        model.load_state_dict(torch.load(load_path, weights_only=True))
-        config_utils.load_ANN_weights(model, load_path)
+            config_utils.load_ANN_weights(model, load_path)
 
 
     
@@ -159,8 +164,8 @@ config_utils.logging.info(f"Model output: {y}")
 image = x.view(28, 28)
 
 # Convert to numpy and plot
-plt.imshow(image.numpy(), cmap='gray')
-plt.title("28x28 Image from Flattened Tensor")
+plt.imshow(image.numpy(), cmap='gray_r')
+plt.title("Original 28x28 Image from Flattened Tensor")
 plt.axis('off')
 plt.show()
 plotting.plot_input_tensor(image)
@@ -197,8 +202,44 @@ if args.testing and args.epochs > 0:
     config_utils.logging.info("### Final test set accuracy (after training / fine-tuning) ###")
     if 'SNN' in args.model_type:
         train_torch.evaluate_FC_SNN(model, dataset.test_load)
+
     elif 'ReLU' in args.model_type:
-        train_torch.evaluate_FC_ReLU(model, dataset.test_load)
+        # TODO: collect activations
+        model.collect_activations = True 
+        train_torch.evaluate_FC_ReLU(model, dataset.test_load)  
+
+        plt.figure(figsize=(10, 5))
+        for k,v in model.all_activations.items():
+            # breakpoint()
+            activations_np = np.round(np.array(v),decimals=2)
+            plt.hist(activations_np, bins=40, label=k, alpha=0.6)
+
+        plt.title(f'ReLU Activations - evaluated on test set')
+        plt.xlabel('Activation')
+        plt.ylabel('Frequency')
+        plt.xlim(0, 8)
+        plt.legend(loc='upper left')
+        plt.show()
+        model.all_activations = {}
+
+        y = model(x)
+        config_utils.logging.info(f"Model output: {y}")
+        plt.figure(figsize=(10, 5))
+        for k,v in model.all_activations.items():
+            # breakpoint()
+            activations_np = np.round(np.array(v),decimals=2)
+            plt.hist(activations_np, bins=40, label=k, alpha=0.6)
+
+        plt.title(f'ReLU Activations - forward pass on sample x')
+        plt.xlabel('Activation')
+        plt.ylabel('Frequency')
+        plt.xlim(0, 8)
+        plt.legend(loc='upper left')
+        plt.show()
+
+
+
+
    
     
 ''' Save model weights post-training'''
@@ -219,25 +260,49 @@ if args.save == True:
 
     if 'SNN' in args.model_type:
         # save the SNN when trained to avoid re-training (this is NOT the ANN-SNN conversion step)
-        save_path = args.logging_dir + 'full_snn_weights.pth'
+        save_path = args.logging_dir + args.model_name + '_full_snn_weights.pth'
         config_utils.logging.info(f"### Saving model post-training to {save_path}")
         torch.save(model.state_dict(), save_path)   # save weights as dict rather than the entire model
 
+        X_n_list = [(layer.t_max - layer.t_min) / 1.5 for layer in model.hidden_layers]
+        print(X_n_list)
+        pkl.dump(X_n_list, open(args.logging_dir + '/' + args.model_name + '_SNN_X_n.pkl', 'wb'))
+
 if 'SNN' in args.model_type:
     config_utils.logging.info("\n### Get layer time intervals AFTER training ###")
+    interval_bounds_list = []
     for n, layer in enumerate(model.hidden_layers):
         config_utils.logging.info(f"layer_{n}: t_min={layer.t_min}, t_max={layer.t_max}")
+        interval_bounds_list.append(np.round(layer.t_max,2))
     config_utils.logging.info(f"output_layer: t_min={model.output_layer.t_min}, t_max={model.output_layer.t_max}\n")
 
+    # Evaluate on testset one more time
+    acc_trained, _ = train_torch.evaluate_FC_SNN(model, dataset.test_load)
 
-''' Make another forward pass post-training, log the input spike times and plot them '''
-# config_utils.logging.info("\n\n\n--- Attempt another forward pass ---\n")
-# model.eval()
-# tuple = dataset.train_set.__getitem__(0)
-# x = tuple[0]
-# config_utils.logging.info(f"Shape of input x: {(x.shape)}")
-# y = model(x)
-# config_utils.logging.info(f"Model output: {y}")
+    ### Plot the activations relative to the interval
+    # model.collect_activations = True 
+    
+    # dump_path = args.logging_dir + 'outputs/' + args.model_name + '_SNN_TEST.npz'
+    # model.dump_activations(dump_path)
+    # plotting.plot_output_spikes(dump_path, model=model, additional_title='SNN test set evaluation\n')
+    # model.collect_activations = False
+
+
+    ''' Make another forward pass post-training, log the input spike times and plot them '''
+    config_utils.logging.info("\n\n\n--- Attempt another forward pass ---\n")
+    model.eval()
+    model.collect_activations = True
+    tuple = dataset.train_set.__getitem__(0)
+    x = tuple[0]
+    plotting.plot_input_spikes(x)
+    config_utils.logging.info(f"Shape of input x: {(x.shape)}")
+    y = model(x)
+    config_utils.logging.info(f"Model output: {y}")
+    dump_path = args.logging_dir + 'outputs/' + args.model_name + '_post_train_pass.npz'
+    model.dump_activations(dump_path)
+    plotting.plot_output_spikes(dump_path, model=model,additional_title=f'Forward Pass - re-trained on GrayScale images\nHidden Layers={len(model.hidden_layers)} | Test Acc.={acc_trained}% | Intervals={interval_bounds_list}')
+
+
 
 if 'SNN' in args.model_type and model.N_layers >= 3:
     ''' ------ Save activations from the above forward pass -------- '''
@@ -255,7 +320,7 @@ if 'SNN' in args.model_type and model.N_layers >= 3:
 
     
     plotting.plot_membrane_potential_path(model, dump_path, [min_spike_neuron_index, 40,200], title_addition='Forward Pass - Unoptimized')
-    plotting.plot_output_spikes(dump_path, model=model, additional_title='\nForward Pass - Unoptimized')
+    plotting.plot_output_spikes(dump_path, model=model, additional_title='\nForward Sample - Unoptimized')
     
     model.collect_activations = False 
     print("\n### Accuracy without optimizations: ")
