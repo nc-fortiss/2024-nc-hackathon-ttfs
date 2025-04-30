@@ -7,6 +7,7 @@ import config_utils
 import h5py
 import pickle
 from train_torch import evaluate_FC_SNN
+import matplotlib.pyplot as plt
 
 # import pdb   # debugger
 
@@ -98,8 +99,15 @@ class SpikingDenseTorch(nn.Module):
             i = 0
         else: 
             init.xavier_uniform_(self.kernel)           # initialize weight tensor, with initializer if provided
-
+        
+        # Trainable threshold parameter
         self.D_i = nn.Parameter(torch.zeros(N_out))
+
+        # Vectors with slope and membrane potential for each neuron for discretized network
+        self.A = torch.zeros(N_out)
+        self.V = torch.zeros(N_out)
+
+
 
     def set_intervals(self, t_min_prev,t_min):
         ''' Sets t_min_prev, t_min, and t_max for this layer. The bounds are determined and set 
@@ -124,6 +132,20 @@ class SpikingDenseTorch(nn.Module):
             ti = self.alpha * (self.t_min - self.t_min_prev) + W_mult_x
         
         return ti
+    
+    def discrete_forward(self, delta_k, input_spikes):
+
+        for k in range(0, self.t_max, delta_k):
+
+            if k < self.t_min:
+                # current_layer.A = current_layer.A + torch.matmul(current_layer.kernel,   
+                pass    
+            elif k <= self.t_max: 
+                pass
+            
+        
+        output_spikes = 0
+        return output_spikes
 
 
 class FC_ReLU_torch(nn.Module):
@@ -267,6 +289,7 @@ class FC_SNN_torch(nn.Module):
            layer_name = f"layer_{i}"
            layer.register_forward_hook(self.get_min_spiketime(layer_name))
            layer.register_forward_hook(self.get_activations(layer_name))
+        
            
     def forward(self, x):
         ''' Defines the forward pass through the entire SNN architecture '''
@@ -372,6 +395,31 @@ class FC_SNN_torch(nn.Module):
         self.output_layer.t_min = t_max_new             # the output layer interval has a size of 1.5 by default
         self.output_layer.t_max = t_max_new + 1.5
 
+    def discrete_forward(self, delta_k, input_spikes):
+        # 1. Discretize the input
+        number_steps_input_layer = int(1/delta_k)
+        discrete_spike_tensor = torch.zeros((number_steps_input_layer, *input_spikes.shape), dtype=torch.float32)
+
+        timestep = 0
+
+        for timestep in range(number_steps_input_layer):
+            
+            lower_bin = timestep * delta_k
+            upper_bin = (timestep + 1) * delta_k
+            mask = (input_spikes >= lower_bin) & (input_spikes < upper_bin)
+            discrete_spike_tensor[timestep] = mask.float()
+
+        # 2. Save discretized array for debugging
+
+        for batch_index in range(discrete_spike_tensor.shape[1]):
+            spikes_first_batch = discrete_spike_tensor[:, batch_index, :]
+            np.savetxt(f'tensor_data{batch_index}.txt', spikes_first_batch, fmt="%d")
+
+
+        # 3. Send the discretized input to 1st hidden layer
+
+        return discrete_spike_tensor
+   
 
 def create_torch_fc_model_ReLU(layers=2, N_hid=340,N_in=784, N_out=10):
     ''' Returns instance of a fully-connected ReLU model '''

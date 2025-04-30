@@ -103,6 +103,86 @@ config_utils.logging.info("\n")
 
 config_utils.TRAIN_SHIFT = False
 
+##################################    TESTING Discretization on first test batch   ###############################
+
+print("### Applying discretization ### ")
+for inputs, truth_labels in dataset.train_load:
+    print("Input tensor shape: ", inputs.shape)
+
+    for batch_index in range(inputs.shape[0]):
+        print(inputs[batch_index])
+
+    delta_k_list = [0.5, 0.1, 0.01, 0.001, 0.0001]
+
+    for delta_k in delta_k_list:
+        tensor_3d = model.discrete_forward(delta_k, input_spikes=inputs)
+        batch_index = 0
+        tensor_batch = tensor_3d[:, batch_index,:]
+
+        rows, cols = np.where(tensor_batch == 1)
+        unique_rows = np.unique(rows)
+        num_unique = len(unique_rows)
+
+        # plt.figure(figsize=(15, 3))
+        # plt.imshow(tensor_batch, cmap='binary', aspect='auto')
+        # plt.colorbar(label='Value (0 or 1)')
+        # plt.xlabel('784 Neurons')
+        # plt.ylabel('Timesteps')
+        # plt.title('Sparse Binary Matrix Heatmap')
+        # plt.show()
+
+        # rows, cols = np.where(tensor_batch == 1)
+        # unique_rows = np.unique(rows)
+        # num_rows = len(unique_rows)
+
+        # plt.figure(figsize=(8, 12))  # Adjusted figure size for vertical orientation
+        # plt.scatter(rows, cols, marker='_', s=100)  # Swapped cols and rows here
+        # plt.xticks(unique_rows)  # Only show ticks for rows that exist
+        # plt.xlim(min(unique_rows)-0.5, max(unique_rows)+0.5) 
+        # plt.xlabel('Timestep Index (0-9)')  # Updated axis labels
+        # plt.ylabel('Neuron Index (0-783)')
+        # plt.title(f'Binary 1 Spikes per timestep - Batch[{batch_index}] - delta_k={delta_k}')
+        # plt.grid(True, alpha=0.3)
+        # plt.gca().invert_yaxis()  # Optional: makes column 0 at top if you prefer
+        # plt.show()
+
+        # Calculate how many ticks we can fit with given delta_k
+        max_ticks = int(1.0 / delta_k)
+        actual_ticks = min(num_unique, max_ticks)
+        
+        # Generate positions and labels
+        tick_positions = [(i+1)*delta_k for i in range(actual_ticks)]
+        tick_labels = [f"{(i+1)*delta_k:.2f}".rstrip('0').rstrip('.') 
+                    for i in range(actual_ticks)]
+        
+        # Map original rows to the new positions
+        row_mapping = {row: (i+1)*delta_k 
+                    for i, row in enumerate(unique_rows[:actual_ticks])}
+        x_positions = np.array([row_mapping.get(row, 1.0) for row in rows])
+        
+        # Plotting
+        plt.figure(figsize=(8, 12))
+        plt.scatter(x_positions, cols, marker='_', s=100)
+        
+        plt.xticks(tick_positions, labels=tick_labels)
+        plt.xlim(0, 1.0)
+        
+        plt.xlabel(f'Row Position (Δk = {delta_k})')
+        plt.ylabel('Column Index')
+        plt.title(f'Sparse Matrix - {num_unique} rows spaced by Δk')
+        plt.grid(True, alpha=0.3)
+        plt.gca().invert_yaxis()
+        plt.show()
+
+
+    for i in range(8):
+        path = f'tensor_data{i}.txt'
+
+        # plotting.plot_discrete_spikes(path)
+
+    breakpoint()
+##################################################################################################################
+
 ''' Load pre-trained weights as needed (pass --load=True or --load==custom_name)'''
 if args.load != 'False':
     config_utils.logging.info("### Loading weights ###")
@@ -239,7 +319,6 @@ if args.testing and args.epochs > 0:
 
 
 
-
    
     
 ''' Save model weights post-training'''
@@ -329,28 +408,6 @@ if 'SNN' in args.model_type and model.N_layers >= 3:
     
 
 
-    ''' ----------  Apply latency quantiles optimization  ----------'''
-    # # Apply latency quantiles aat 99%, ..., 95% - evaluate and save activations
-    # for q in reversed(range(95,100)):
-    #     config_utils.logging.info(f"### Apply latency quantile q={q}%")
-    #     model.apply_max_quantiles(q)
-
-    #     #train_torch.evaluate_FC_SNN(model, dataset.test_load)
-    #     y = model(x)
-    #     optimization_name = f'_{q}.npz'
-    #     optimized_activations_path = args.logging_dir + 'outputs/' + args.model_name + optimization_name
-    #     model.dump_activations(optimized_activations_path)
-
-    #     for n, layer in enumerate(model.hidden_layers):
-    #         config_utils.logging.info(f"layer_{n}: t_max={layer.t_max}, t_max_q={layer.robustness_params['latency_quantiles'] * layer.t_max}")
-    
-    # # Plot activations after optimizations
-    # for q in reversed(range(95,100)):
-    #     optimization_name = f'_{q}.npz'
-    #     optimized_activations_path = args.logging_dir + 'outputs/' + args.model_name + optimization_name
-    #     plotting.plot_output_spikes(optimized_activations_path, model=model, additional_title=f'\n{str(q)}')
-
-
     ''' ---------- Apply threshold optimization -------- '''
     config_utils.logging.info("### Apply threshold adjustment optimization")
     model.optimize_threshold(dataset.test_load)
@@ -377,43 +434,74 @@ if 'SNN' in args.model_type and model.N_layers >= 3:
     evaluate_FC_SNN(model, dataset.test_load)
     print(f"output_layer.t_min={model.output_layer.t_min}\n\n")
 
+    # ''' ----------  Apply latency quantiles optimization  ----------'''
+    # # Apply latency quantiles aat 99%, ..., 95% - evaluate and save activations
+    # for q in reversed(range(95,100)):
+    #     config_utils.logging.info(f"### Apply latency quantile q={q}%")
+    #     model.apply_max_quantiles(q)
+
+    #     #train_torch.evaluate_FC_SNN(model, dataset.test_load)
+    #     model.collect_activations = True
+    #     y = model(x)
+    #     optimization_name = f'_{q}.npz'
+    #     optimized_activations_path = args.logging_dir + 'outputs/' + args.model_name + optimization_name
+    #     model.dump_activations(optimized_activations_path)
+
+    #     for n, layer in enumerate(model.hidden_layers):
+    #         config_utils.logging.info(f"layer_{n}: t_max={layer.t_max}, t_max_q={layer.robustness_params['latency_quantiles'] * layer.t_max}")
+        
+    #     model.collect_activations = False 
+    #     config_utils.logging.info("\nAccuracy with threshold adjustment")    
+    #     evaluate_FC_SNN(model, dataset.test_load)
+    #     config_utils.logging.info(f"output_layer.t_min={model.output_layer.t_min}\n\n")
+
+    
+    # # Plot activations after optimizations
+    # for q in reversed(range(95,100)):
+    #     optimization_name = f'_{q}.npz'
+    #     optimized_activations_path = args.logging_dir + 'outputs/' + args.model_name + optimization_name
+    #     plotting.plot_output_spikes(optimized_activations_path, model=model, additional_title=f'\n{str(q)}')
+
+
 
     
     ''' ------------ Reduce t_max ---------------'''
-    model.apply_max_quantiles(100)             # reset latency quantile
+    # model.apply_max_quantiles(100)             # reset latency quantile
 
-    new_t_max = 1
-    for layer in model.hidden_layers:
-        print(f"current t_max={layer.t_max}, current t_min={layer.t_min}")
-        layer.t_min = new_t_max
-        new_t_max = 0.1 * layer.t_max 
-        layer.t_max = new_t_max
-        print(f"updated t_max={layer.t_max}, updated t_min={layer.t_min}")
-    model.output_layer.t_min=new_t_max
+    # new_t_max = 1
+    # for layer in model.hidden_layers:
+    #     print(f"current t_max={layer.t_max}, current t_min={layer.t_min}")
+    #     layer.t_min = new_t_max
+    #     new_t_max = 0.5 * layer.t_max 
+    #     layer.t_max = new_t_max
+    #     print(f"updated t_max={layer.t_max}, updated t_min={layer.t_min}")
+    # model.output_layer.t_min=new_t_max
     
 
-    model.collect_activations = True
-    y = model(x)
-    dump_path = args.logging_dir + 'outputs/' + args.model_name + '_shifted.npz'
-    model.dump_activations(dump_path)
+    # model.collect_activations = True
+    # y = model(x)
+    # dump_path = args.logging_dir + 'outputs/' + args.model_name + '_shifted.npz'
+    # model.dump_activations(dump_path)
 
-    plotting.plot_membrane_potential_path(model, dump_path, [min_spike_neuron_index, 40,200], title_addition='Forward Pass - Shifted t_max')
-    plotting.plot_output_spikes(dump_path, model=model, additional_title='\nForward Pass - Shifted t_max')
+    # plotting.plot_membrane_potential_path(model, dump_path, [min_spike_neuron_index, 40,200], title_addition='Forward Pass - Shifted t_max')
+    # plotting.plot_output_spikes(dump_path, model=model, additional_title='\nForward Pass - Shifted t_max')
 
-    model.collect_activations = False
-    print("\nAccuracy with t_max shifting: ")
-    train_torch.evaluate_FC_SNN(model, dataset.test_load)
-    print(f"output_layer.t_min={model.output_layer.t_min}\n\n")
+    # model.collect_activations = False
+    # print("\nAccuracy with t_max shifting: ")
+    # train_torch.evaluate_FC_SNN(model, dataset.test_load)
+    # print(f"output_layer.t_min={model.output_layer.t_min}\n\n")
 
     
-    for i in range (20):
-        data_label_tuple = dataset.test_set[i]
-        x = data_label_tuple[0]
-        y = model(x)
-        y_predicted = torch.argmax(y)
-        y_correct = data_label_tuple[1]
-        print(f"y_pred={y_predicted} - y_corr={y_correct}")
+    # for i in range (20):
+    #     data_label_tuple = dataset.test_set[i]
+    #     x = data_label_tuple[0]
+    #     y = model(x)
+    #     y_predicted = torch.argmax(y)
+    #     y_correct = data_label_tuple[1]
+    #     print(f"y_pred={y_predicted} - y_corr={y_correct}")
 
+
+    #  ############################################################################################################################################### ### 
 
     # config_utils.DEBUG_MODE = True
     # evaluate_FC_SNN(model, dataset.test_load)
