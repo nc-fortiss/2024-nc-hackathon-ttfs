@@ -104,8 +104,8 @@ class SpikingDenseTorch(nn.Module):
         self.D_i = nn.Parameter(torch.zeros(N_out))
 
         # Vectors with slope and membrane potential for each neuron for discretized network
-        self.A = torch.zeros(N_out)
-        self.V = torch.zeros(N_out)
+        self.A = None
+        self.V = None
 
 
 
@@ -134,18 +134,56 @@ class SpikingDenseTorch(nn.Module):
         return ti
     
     def discrete_forward(self, delta_k, input_spikes):
+        '''
+            First, the 'input_spikes' arriving from the previous layer are integrated 
+            in the membrane potential of the neurons in this layer 
+            in a step-wise manner, with step size equal to 'delta_k'. Next, the membrane 
+            potentials follow the constant update rule. If a neuron's membrane potential 
+            reaches the threshold at a discrete timestep K, then a '1' will be placed in the 
+            respective index of the output spikes tensor. 
 
-        for k in range(0, self.t_max, delta_k):
+            Arguments:
+            delta_k: defines the step size; it should be equal across all layers
+            input_spikes: shape=[K, B, N] for timestep index K in prev layer, batch B and neuron N in current layer, 
+                        containing a '1' for every neuron index that produced a spike at time K in the previous layer. 
+        '''
 
-            if k < self.t_min:
-                # current_layer.A = current_layer.A + torch.matmul(current_layer.kernel,   
-                pass    
-            elif k <= self.t_max: 
-                pass
-            
+        # Number of discrete timesteps that can happen before t_max in the spiking window interval of this (!) layer
+        number_timesteps = int((self.t_max - self.t_min) / delta_k) 
+        batch_size = input_spikes.shape[1]
+
+        discrete_output_tensor = torch.zeros([number_timesteps, batch_size, self.N_out], dtype=torch.float64)
+        layer_threshold = self.t_max - self.t_min 
+
+        # 1. Process the in-coming spikes from the previous layer: integration phase 
+        # Iterate over each timestep from the previous layer
+        for timestep_index in range(input_spikes.shape[0]):
+            batched_spikes_matrix = input_spikes[timestep_index]
+
+            weighted_spikes = torch.matmul(batched_spikes_matrix, self.kernel)
+            self.A = self.A + weighted_spikes
+            self.V = self.V + self.A * delta_k
         
-        output_spikes = 0
-        return output_spikes
+        # 2. If this is not the output layer: switch to spiking phase, starting at layer.t_min
+        # Fix constant slope and populate the output spikes vector as needed
+        if not self.is_output:
+            timestep = self.t_min
+            for timestep_index in range(number_timesteps):
+                self.V = self.V + delta_k 
+
+                # Check spike condition: get indices of neurons that passed threshold 
+                spiking_neurons_mask = self.V >= layer_threshold
+
+                # Update output tensor at this timestep
+                discrete_output_tensor[timestep_index] = spiking_neurons_mask.float()
+
+                # Reset membrane potential of neurons that have spiked (neurons fire at most once)
+                self.V[spiking_neurons_mask] = 0.0
+                timestep += delta_k
+            return discrete_output_tensor
+        else:
+            # at the (non-spiking) output layer, we return the membrane potentials, which can be used for prediction
+            return self.V
 
 
 class FC_ReLU_torch(nn.Module):
@@ -290,15 +328,22 @@ class FC_SNN_torch(nn.Module):
            layer.register_forward_hook(self.get_min_spiketime(layer_name))
            layer.register_forward_hook(self.get_activations(layer_name))
         
+        self.discretization = False 
+        self.delta_k = None 
            
     def forward(self, x):
-        ''' Defines the forward pass through the entire SNN architecture '''
-        # breakpoint()
-        for i, l in enumerate(self.hidden_layers):
-            x = l(x)
-        x = self.output_layer(x)
-        return x 
+        ''' 
+            Defines the forward pass through the entire SNN architecture 
+        '''
 
+        if not self.discretization:
+            for i, l in enumerate(self.hidden_layers):
+                x = l(x)
+            x = self.output_layer(x)
+            return x 
+        else: 
+            discrete_x = self.discrete_forward(self.delta_k, x)
+            return discrete_x
  
     def set_snn_intervals(self, t_min_start=0, t_max_start=1):
         ''' Helper function to create the [t_min, t_max] boundaries for the 
@@ -380,6 +425,7 @@ class FC_SNN_torch(nn.Module):
             exactly at t_min (for the sample that produced the same global minimum)
 
         '''
+        extend_margin = 0.1
         self.min_spike_times = {}       # reset minimum spike times
         self.collect_activations = False        # no need to collect activations during evaluation here
         evaluate_FC_SNN(self, test_data)
@@ -390,35 +436,58 @@ class FC_SNN_torch(nn.Module):
             layer_name = f'layer_{i}'
             layer.t_min=t_max_new
             t_max_new = layer.t_max + layer.t_min - self.min_spike_times[layer_name]
+            t_max_new = (1 + extend_margin) * t_max_new
             layer.t_max=t_max_new
 
         self.output_layer.t_min = t_max_new             # the output layer interval has a size of 1.5 by default
         self.output_layer.t_max = t_max_new + 1.5
 
     def discrete_forward(self, delta_k, input_spikes):
-        # 1. Discretize the input
+        
+        # Setup layer-wise parameters based on input shape
+        batch_size = input_spikes.shape[0]
+        for layer in self.hidden_layers:
+            layer.A = torch.zeros(batch_size, layer.N_out, device=input_spikes.device, dtype=torch.float64)
+            layer.V = torch.zeros(batch_size, layer.N_out, device=input_spikes.device, dtype=torch.float64)
+
+        # Setup parameters for output layer
+        self.output_layer.A = torch.zeros(batch_size, self.output_layer.N_out, device=input_spikes.device, dtype=torch.float64)
+        self.output_layer.V = torch.zeros(batch_size, self.output_layer.N_out, device=input_spikes.device, dtype=torch.float64)
+
+        # breakpoint()
+
+        # 1. Discretize the input spikes that have been encoded
         number_steps_input_layer = int(1/delta_k)
-        discrete_spike_tensor = torch.zeros((number_steps_input_layer, *input_spikes.shape), dtype=torch.float32)
+        discrete_3d_spike_tensor = torch.zeros((number_steps_input_layer, *input_spikes.shape), dtype=torch.float64)
 
-        timestep = 0
+        timestep_index = 0
+        for timestep_index in range(number_steps_input_layer):
+            lower_bin = timestep_index * delta_k                # define bin boundaries
+            upper_bin = (timestep_index + 1) * delta_k
+            mask = (input_spikes >= lower_bin) & (input_spikes < upper_bin) # filter tensor
+            discrete_3d_spike_tensor[timestep_index] = mask.float()            # add to discretized tensor
 
-        for timestep in range(number_steps_input_layer):
-            
-            lower_bin = timestep * delta_k
-            upper_bin = (timestep + 1) * delta_k
-            mask = (input_spikes >= lower_bin) & (input_spikes < upper_bin)
-            discrete_spike_tensor[timestep] = mask.float()
-
-        # 2. Save discretized array for debugging
-
-        for batch_index in range(discrete_spike_tensor.shape[1]):
-            spikes_first_batch = discrete_spike_tensor[:, batch_index, :]
-            np.savetxt(f'tensor_data{batch_index}.txt', spikes_first_batch, fmt="%d")
+        # 2. Save discretized matrices for each batch for debugging
+        # !!! For PLOTTING only
+        # for batch_index in range(discrete_3d_spike_tensor.shape[1]):
+        #     spikes_first_batch = discrete_3d_spike_tensor[:, batch_index, :]
+        #     save_path = config_utils.LOGGING_DIR + f'/outputs/discrete_input_batch_{batch_index}.txt'
+        #     np.savetxt(save_path, spikes_first_batch, fmt="%d")
 
 
-        # 3. Send the discretized input to 1st hidden layer
+        # 3. Send the discretized input to 1st hidden layer and then iterate over the remaining layers
+        batch_index = 0
+        for i,layer in enumerate(self.hidden_layers):
+            discrete_3d_spike_tensor = layer.discrete_forward(delta_k, discrete_3d_spike_tensor)
 
-        return discrete_spike_tensor
+            # !!! For PLOTTING only - save a sample from the 1st batch for visualization
+            # batch_spike_tensor = discrete_3d_spike_tensor[:, batch_index, :]
+            # save_path = config_utils.LOGGING_DIR + f'/outputs/discrete_layer_{i}_batch_{batch_index}.txt'
+            # np.savetxt(save_path, batch_spike_tensor, fmt="%d")
+
+        # Pass tensor from last hidden layer to output layer, which returns the read-out membrane potential values
+        final_output_tensor = self.output_layer.discrete_forward(delta_k, discrete_3d_spike_tensor)
+        return final_output_tensor
    
 
 def create_torch_fc_model_ReLU(layers=2, N_hid=340,N_in=784, N_out=10):

@@ -382,6 +382,37 @@ def plot_MNIST_tensor(original_image, tensor_input, label):
     fig.suptitle(f"Label: {label}", fontsize=14)
     plt.show()
 
+def plot_discrete_tensor(path, delta_k, t_min, t_max):
+    with open(path, 'r') as f:
+
+        x = []
+        y = []
+
+        timestep_k = t_min
+        timestep_count = 0
+        total_spikes = 0
+        
+        for line in f:
+            spikes_list = [int(x) for x in line.split(" ")] 
+            active_indices = [i for i in range(len(spikes_list)) if spikes_list[i] == 1]
+            total_spikes += len(active_indices)
+            for active_index in active_indices: 
+                x.append(timestep_k)
+                y.append(active_index)
+            timestep_k += delta_k
+            timestep_count += 1
+
+        neurons_number = len(spikes_list)
+
+        plt.scatter(x,y,s=25, alpha=0.5)
+        plt.xlim(t_min-0.05,t_max)
+        plt.ylim(0, neurons_number)
+        plt.title(f'Indices of Spiking Neurons\ndelta_k={delta_k} - discrete timesteps: K={timestep_count} - spike count: N={total_spikes}')
+        plt.xlabel("Timestep K")
+        plt.ylabel("Neuron Index")
+        plt.show()
+
+    return 0
 
 
 def main():
