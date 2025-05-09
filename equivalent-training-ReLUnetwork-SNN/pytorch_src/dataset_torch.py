@@ -77,10 +77,27 @@ class Dataset_Torch:
 
         def to_float_64(x):
             return x.to(dtype=torch.float64)
-        
+
         def apply_grayscale_MNIST(x):
             x[x == 1] = 0.8
             return x
+        
+        # Apply transforms and conversions directly in the data-loading step as opposed to the load, then convert approach as in tensorflow
+        train_transform = transforms.Compose([
+            # transforms.Lambda(lambda x: x.filter(ImageFilter.GaussianBlur(1))),
+            # transforms.RandomGrayscale(p=0.7),
+            transforms.ToTensor(),  # Converts (H, W) → (1, H, W) and normalizes to [0,1]
+            transforms.Lambda(lambda x: self.add_strong_noise(x, enable=self.image_noise)),
+            transforms.Lambda(lambda x: to_float_64(x)), 
+            transforms.Lambda(lambda x: conditional_flatten(x, self.flatten)),   # Re-shapes input tensors as needed
+            transforms.Lambda(lambda x: convert_ttfs_fun(x) if self.convert_ttfs else  x) 
+            # transforms.Lambda(lambda x: apply_grayscale_MNIST(x))   # Converts pixels into spikes if needed
+        ])
+
+        # extend the train_transform object with one additional transform, applied only to the testset
+        test_transform = transforms.Compose(train_transform.transforms + [
+            transforms.Lambda(lambda x: add_noise(x, self.ttfs_noise))  
+        ])
         
 
         if 'MNIST' in self.name:
@@ -88,30 +105,21 @@ class Dataset_Torch:
             self.q, self.p = 1.0, 0.0       
             self.num_of_classes = 10
 
-            # Apply transforms and conversions directly in the data-loading step as opposed to the load, then convert approach as in tensorflow
-            train_transform = transforms.Compose([
-                # transforms.Lambda(lambda x: x.filter(ImageFilter.GaussianBlur(1))),
-                # transforms.RandomGrayscale(p=0.7),
-                transforms.ToTensor(),  # Converts (H, W) → (1, H, W) and normalizes to [0,1]
-                transforms.Lambda(lambda x: self.add_strong_noise(x, enable=self.image_noise)),
-                transforms.Lambda(lambda x: to_float_64(x)), 
-                transforms.Lambda(lambda x: conditional_flatten(x, self.flatten)),   # Re-shapes input tensors as needed
-                transforms.Lambda(lambda x: convert_ttfs_fun(x) if self.convert_ttfs else  x) 
-                # transforms.Lambda(lambda x: apply_grayscale_MNIST(x))   # Converts pixels into spikes if needed
-            ])
-
-            # extend the train_transform object with one additional transform, applied only to the testset
-            test_transform = transforms.Compose(train_transform.transforms + [
-                transforms.Lambda(lambda x: add_noise(x, self.ttfs_noise))  
-            ])
-
-            if self.name=='MNIST':
-                # 'download=True' downloads the data from internet, if not already done; 'train=True' specifies training set
-                # 'root=PATH' specifies the directory where the dataset shall be saved 
+            # 'download=True' downloads the data from internet, if not already done; 'train=True' specifies training set
+            # 'root=PATH' specifies the directory where the dataset shall be saved 
+            if self.name == 'MNIST':
                 self.train_set = datasets.MNIST(root='./datasets/MNIST', train=True, download=True, transform=train_transform)
                 self.test_set = datasets.MNIST(root='./datasets/MNIST', train=False, download=True, transform=test_transform)
             else:
                 self.train_set = datasets.FashionMNIST(root='./datasets/FASHION_MNIST', train=True, download=True, transform=train_transform)
                 self.test_set = datasets.FashionMNIST(root='./datasets/FASHION_MNIST', train=False, download=True, transform=test_transform)
+        elif 'CIFAR' in self.name: 
+            self.input_shape, self.train_sample=(32, 32, 1), 1/64
+            self.q, self.p = 3.0, -3.0       
+            self.num_of_classes = 10
+            self.mean_test, self.std_test=120.707, 64.15
 
+            if self.name=='CIFAR10':
+                self.train_set = datasets.CIFAR10(root='./datasets/CIFAR', train=True, download=True, transform=train_transform)
+                self.test_set = datasets.CIFAR10(root='./datasets/CIFAR', train=False, download=True, transform=test_transform)
                 

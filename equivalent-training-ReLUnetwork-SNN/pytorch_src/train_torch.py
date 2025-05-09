@@ -78,6 +78,10 @@ def evaluate_FC_SNN(model, test_loader):
             correct += (predicted_labels == truth_labels).sum().item()
             test_loss += torch.nn.functional.cross_entropy(output_logits, truth_labels).item()
 
+            total += len(inputs)
+            if (total % 500) == 0:
+                accuracy = 100 * correct / total 
+                print(f"{total} samples -- acc={round(accuracy,3)}")
 
     accuracy = 100 * correct / len(test_loader.dataset)
     test_loss /= len(test_loader)
@@ -116,7 +120,7 @@ def train_FC_ReLU(model,train_data, optimizer,loss_criterion,epochs=5):
                 # print statistics
                 running_loss += loss.item()
                 if batch_idx % 100 == 0:    
-                    config_utils.logging.info(f'[{epoch + 1}, {batch_idx + 1:5d}] loss: {running_loss / 100:.3f} --- acc: {train_acc / total}')
+                    config_utils.logging.info(f'[{epoch + 1}, {batch_idx + 1:5d}] loss: {running_loss / 100:.3f} --- acc: {round(train_acc / total, 2)}')
                     running_loss = 0.0
 
         config_utils.logging.info('Finished Training')
