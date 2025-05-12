@@ -36,6 +36,17 @@ def set_up_logging(logging_dir, model_name):
     if not os.path.exists(logging_dir + '/outputs'):
         os.makedirs(logging_dir + '/outputs')
 
+def write_conv_tensor(filename, tj):
+
+    tj = tj.clone().detach().squeeze(0) 
+
+    with open(filename, "w") as f:
+        for c in range(tj.shape[0]):
+            f.write(f"Channel {c}:\n")
+            for row in tj[c]:
+                row_str = ' '.join(f"{v.item():.3f}" for v in row)
+                f.write(row_str + '\n')
+            f.write("\n")
     
 def clean_spike_logs(model):
     ''' Cleans any existing spike-time files from the logging directory  '''

@@ -84,9 +84,37 @@ dataset = Dataset_Torch(
     ttfs_noise=args.noise,
 )
 
-print(dataset.train_set[0][0].shape)
-print("\n")
 
+layer = SpikingConv2DTorch(
+    filters=64,
+    kernel_size=(3, 3),
+    padding='same',
+    X_n=10,
+    in_channels=3,  
+    robustness_params={'noise': 0.0, 'latency_quantiles': 1.0}
+)
+
+layer.t_min = 1.0 
+layer.t_max = 11.6
+layer.first_convolutional_layer = True
+x_train = dataset.train_set
+
+x = dataset.train_set[0][0]     #1st image 
+x_batched = x.unsqueeze(0)      # extend with batch shape into [B, C, H, W]
+
+
+print(x_batched.shape)
+print("\n")
+res = layer(x_batched)
+print("\nend of layer pass test\n")
+
+X_n = [7.066748072435452, 79.91157541567785, 39.821228208764715, 22.539859687333525, 11.000932754264124, 10.471817021489022, 10.879581317272287, 9.355208734980877, 8.01244217113474, 8.970639901116368, 6.78019565952555, 3.729955484696675, 4.039098928722278, 3.646569651690345, 13.128600124904565]
+
+vgg = VGG_SNN_torch(X_n, (3,3), robustness_params={})
+vgg.set_snn_intervals(0,1)
+y = vgg(x_batched)
+
+breakpoint()
 ''' Instantiate model '''
 X_n = [5.43, 4.5, 6.7]
 model = None 

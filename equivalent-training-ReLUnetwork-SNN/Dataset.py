@@ -63,6 +63,8 @@ class Dataset:
         print ('Train data:', np.shape(self.x_train), np.shape(self.y_train))
         print ('Test data:', np.shape(self.x_test), np.shape(self.y_test))
 
+        # np.savetxt('./tf_input', self.x_train[0][0])
+
     def convert_ttfs(self):
         """
         Convert input values into time-to-first-spike spiking times.

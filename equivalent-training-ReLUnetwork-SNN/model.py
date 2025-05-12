@@ -42,6 +42,7 @@ class SpikingDense(tf.keras.layers.Layer):
         Input spiking times tj, output spiking times ti or the value of membrane potential in case of output layer. 
         """
         # print(f"### Calling forward pass for layer={self.name}")
+        # breakpoint()
         output = call_spiking(tj, self.kernel, self.D_i, self.t_min_prev, self.t_min, self.t_max, self.robustness_params)
         # In case of the output layer a simple integration is applied without spiking. 
         if self.outputLayer:
@@ -66,6 +67,7 @@ class SpikingConv2D(tf.keras.layers.Layer):
         self.t_min_prev, self.t_min, self.t_max=0, 0, 1
         self.robustness_params=robustness_params
         self.alpha = tf.cast(tf.fill((filters, ), 1), dtype=tf.float64)
+        self.debugging = False
         super(SpikingConv2D, self).__init__(name=name)
     
     def build(self, input_dim):
@@ -91,13 +93,31 @@ class SpikingConv2D(tf.keras.layers.Layer):
         """
         Input spiking times tj, output spiking times ti. 
         """
+        # print(f"### layer.name={self.name} - input.shape={tj.shape}")
+        # if self.debugging:
+        #     breakpoint()
+
+
         # Image size in case of padding='same' or padding='valid'.
         padding_size, image_same_size = int(self.padding=='same')*(self.kernel_size[0]//2), tf.shape(tj)[1] 
         image_valid_size = image_same_size - self.kernel_size[0]+1
         # Pad input with t_min value, which is equivalent with 0 in ReLU network.
         tj=tf.pad(tj, tf.constant([[0, 0], [padding_size, padding_size,], [padding_size, padding_size], [0, 0]]), constant_values=self.t_min)
+
+        # print("padded tj.shape=", tj.shape)
+        
+        # if self.debugging:
+        #     utils.write_tensor("tf_padded_tensor.txt", tj)
+
         # Extract image patches of size (kernel_size, kernel_size). call_spiking function will be called for different patches in parallel.  
         tj = tf.image.extract_patches(tj, sizes=[1, self.kernel_size[0], self.kernel_size[1], 1], strides=[1, 1, 1, 1], rates=[1, 1, 1, 1], padding='VALID')
+
+        # if self.debugging:
+        #     utils.write_tensor("tf_patches_tensor.txt", tj)
+        #     breakpoint()
+
+        # print("patches tj.shape=", tj.shape)
+
         # We reshape input and weights in order to utilize the same function as for the fully-connected layer.
         W = tf.reshape(self.kernel, (-1, self.filters))
         if self.padding=='valid' or self.BN!=1 or self.BN_before_ReLU==1: 
@@ -112,6 +132,7 @@ class SpikingConv2D(tf.keras.layers.Layer):
         else:
             # In this case there are 9 different thresholds for 9 different image partitions.
             tj_partitioned = [tj[:, 1:-1, 1:-1, :], tj[:, :1, :1, :], tj[:, :1, 1:-1, :], tj[:, :1, -1:, :], tj[:, 1:-1, -1:, :], tj[:, -1:, -1:, :] , tj[:, -1:, 1:-1, :], tj[:, -1:, :1, :], tj[:, 1:-1, :1, :]]
+
             ti_partitioned=[]
             for i, tj_part in enumerate(tj_partitioned):
                 # Iterate over 9 different partitions and call call_spiking with different threshold value.
@@ -132,7 +153,20 @@ class SpikingConv2D(tf.keras.layers.Layer):
             else:
                 ti_top_row = tf.concat([ti_partitioned[1], ti_partitioned[3]], axis=2)
                 ti_bottom_row = tf.concat([ti_partitioned[7], ti_partitioned[5]], axis=2)
-                ti = tf.concat([ti_top_row, ti_bottom_row], axis=1)   
+                ti = tf.concat([ti_top_row, ti_bottom_row], axis=1)  
+
+        # if self.debugging:
+        #     breakpoint()
+            # utils.write_tensor("tf_layer_result.txt", ti)
+        
+        # print("output ti.shape=", ti.shape)
+        # print("\n")
+
+        # if self.debugging: 
+        #     breakpoint()
+
+        # print("output return: ti.shape=", ti.shape)
+
         return ti
 
 
@@ -249,6 +283,7 @@ def create_vgg_model_SNN(layers2D, kernel_size, layers1D, data, optimizer, X_n=1
     """
     min_ti=[]
     tj = Input(shape=data.input_shape) 
+
     ti = SpikingConv2D(layers2D[0], 'conv2d_1', (X_n[0] if type(X_n)==list else X_n),
                        kernel_regularizer=kernel_regularizer, kernel_initializer=kernel_initializer,
                        padding='same', kernel_size=kernel_size,
@@ -266,6 +301,7 @@ def create_vgg_model_SNN(layers2D, kernel_size, layers1D, data, optimizer, X_n=1
             ti, image_size=-MaxMinPool2D()(-ti), image_size//2
     ti=Flatten()(ti)
     i_dense = 1
+
     ti =SpikingDense(layers1D[0], 'dense_'+str(i_dense), (X_n[j] if type(X_n)==list else X_n),
                      kernel_regularizer=kernel_regularizer, kernel_initializer=kernel_initializer,
                      robustness_params=robustness_params, input_dim=(image_size**2)*layers2D[-2])(ti)
@@ -344,6 +380,8 @@ def call_spiking(tj, W, D_i, t_min_prev, t_min, t_max, robustness_params):
     threshold = t_max - t_min - D_i
 
     #### For debugging only ####
+
+    # print(f"tj.shape={tj.shape} --- W.shape={W.shape}")
     
     # breakpoint()
     if (utils.BATCHES > 0 and utils.BATCHES % 500 == 0) or (utils.BATCHES > 7000):

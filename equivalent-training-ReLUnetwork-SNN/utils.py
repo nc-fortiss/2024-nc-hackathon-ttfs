@@ -26,6 +26,21 @@ def set_up_logging(logging_dir, model_name):
     mpl_logger.setLevel(logging.WARNING)
 
 
+def write_tensor(filename, tj):
+    # Input tj: [B, H, W, C] -> remove batch assuming B=1 and write [H,W] channel-wise to file 
+    tj_squeezed = tf.squeeze(tj, axis=0)    # remove batch dimension
+    H, W, C = tj_squeezed.shape
+
+    # Write each channel as its own block
+    with open(filename, "w") as f:
+        for c in range(C):
+            f.write(f"Channel {c}:\n")
+            for i in range(H):
+                row = tj_squeezed[i, :, c]  # [W] for channel c
+                row_str = ' '.join(f"{v.numpy():.3f}" for v in row)
+                f.write(row_str + "\n")
+            f.write("\n")
+
 def get_optimizer(lr):
     """
     Get optimizer for the training on MNIST/Fashion-MNIST dataset.

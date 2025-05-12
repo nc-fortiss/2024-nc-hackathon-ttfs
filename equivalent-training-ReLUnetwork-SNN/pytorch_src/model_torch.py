@@ -5,6 +5,7 @@ import torch.nn.init as init
 import numpy as np
 import config_utils
 import h5py
+import math
 import pickle
 from train_torch import evaluate_FC_SNN
 import matplotlib.pyplot as plt
@@ -25,7 +26,8 @@ def call_spiking(tj, W, D_i, t_min_prev, t_min, t_max, robustness_params):
     
     # print(f"call spiking --- t_min={t_min} --- t_max={t_max} --- thresh={threshold[0]} --- tj.shape={tj.shape}")
     # breakpoint()
-
+    
+    # print(f"tj.shape={tj.shape} --- W.shape={W.shape}")
     ti = (torch.matmul(tj-t_min, W) + threshold + t_min)
 
     # Ensure valid spiking time. Do not spike for ti >= t_max.
@@ -33,9 +35,10 @@ def call_spiking(tj, W, D_i, t_min_prev, t_min, t_max, robustness_params):
     # if config_utils.DEBUG_MODE: breakpoint()
     # ti = torch.where(ti < t_max, ti, t_max)
     # TODO: how to set ti if ti >= t_max_quantized
-    ti = torch.where(ti < robustness_params['latency_quantiles'] * t_max, ti, t_max)
+    
+    ti = torch.where(ti < t_max, ti, t_max)
     # Add noise to the spiking time for noise simulations
-    ti = ti + torch.normal(mean=0.0, std=robustness_params['noise'], size=ti.shape, dtype=torch.float64)
+    ti = ti + torch.normal(mean=0.0, std=0.0, size=ti.shape, dtype=torch.float64)
     return ti
 
 def compute_membrane_potential(t, i, tj, W):
@@ -59,6 +62,24 @@ def compute_membrane_potential(t, i, tj, W):
 
     return weighted_sum 
 
+def extract_patches_from_spike_tensor(tj, ):
+
+        ''' Apply PATCHING to input spike tensor 'tj' with shape [B, H, W, C] 
+
+            Extracts image patches of size (kH, kW) across all input channels C which are S stride(s) apart from each other. 
+            This simulates the convolutional sliding window. Each patch is flattened into a 1D vector of shape P=(kH * kW * C, 0)
+            The operation then collects each patch vector into the re-shaped output tensor of shape [B, O, O, P]
+            where O stands for the size of each output activation filter.   
+
+            For example, for a padded CIFAR10 input spike tensor with shape [B, 34, 34, 3] and a kernel size (3,3):
+            As one patch also extracts the features from the channels, each patch will have a (flattened) shape of O = ((3*3) * 3) = (27) 
+            We can extract 32 patches in the width direction and 32 in the height direction. 
+            In total, all patches are collected in the output tensor with shape [B, 32, 32, 27]
+
+            In order to subset the input tensor, the torch.Tensor.unfold function can be used. 
+
+        ''' 
+        return 0 
 
 class SpikingDenseTorch(nn.Module):
     ''' Creates a single Spiking Dense Layer 
@@ -79,7 +100,7 @@ class SpikingDenseTorch(nn.Module):
 
     '''
 
-    def __init__(self, N_in, N_out, X_n=1, robustness_params={}, kernel_regularizer=None, kernel_initializer=None, is_output=False):
+    def __init__(self, N_in, N_out, X_n=1, name="", robustness_params={}, kernel_regularizer=None, kernel_initializer=None, is_output=False):
         super().__init__()
 
         self.N_in = N_in            
@@ -88,6 +109,7 @@ class SpikingDenseTorch(nn.Module):
         self.B_n = (1 + 0.5) * X_n
         self.t_min_prev, self.t_min, self.t_max=0, 0, 1
         self.is_output = is_output
+        self.name=name
 
         self.robustness_params=robustness_params
         self.alpha = torch.ones(self.N_in, dtype=torch.float64)
@@ -184,6 +206,232 @@ class SpikingDenseTorch(nn.Module):
         else:
             # at the (non-spiking) output layer, we return the membrane potentials, which can be used for prediction
             return self.V
+
+class SpikingConv2DTorch(nn.Module):
+    def __init__(self, filters, in_channels, robustness_params, name=None, X_n=1, padding='same', kernel_size=(3,3),
+                 kernel_regularizer=None, kernel_initializer=None):
+
+        super().__init__()
+        self.in_channels = in_channels
+        self.filters=filters
+        self.kernel_size=kernel_size
+        self.padding=padding
+        self.regularizer = kernel_regularizer
+        self.initializer = kernel_initializer
+        self.B_n = (1 + 0.5) * X_n
+        self.t_min_prev, self.t_min, self.t_max=0.0, 0.0, 1.0
+        self.robustness_params=robustness_params
+        self.alpha = torch.ones(filters, dtype=torch.float64)
+        self.name=name 
+
+        self.first_convolutional_layer = False 
+        self.padding_per_side = kernel_size[0] // 2 if padding == 'same' else 0     
+
+        # Filter weight
+        init_kernel = torch.empty((*self.kernel_size, in_channels, filters), dtype=torch.float64)
+        self.kernel = nn.Parameter(init_kernel, requires_grad=True)  
+
+        if self.initializer:
+            self.initializer(self.kernel)
+        else:
+            init.xavier_uniform_(self.kernel)
+
+        # BN fusion flags (non-trainable)
+        self.BN = 0 
+        self.BN_before_ReLU = 0
+
+        # D_i: shape = (9, filters) for different padding cases
+        self.D_i = nn.Parameter(torch.zeros((9, filters), dtype=torch.float64), requires_grad=True)
+
+    def set_intervals(self, t_min_prev,t_min):
+        ''' Sets t_min_prev, t_min, and t_max for this layer. The bounds are determined and set 
+            before training even begins. Equivalent to 'set_params' in the tensorflow code. 
+        '''
+        self.t_min_prev = t_min_prev 
+        self.t_min = t_min 
+        self.t_max = t_min + self.B_n 
+        return t_min, t_min+self.B_n
+
+    def forward(self, tj):
+        """
+        Input spiking times tj: [B, H, W, C]
+        Output spiking times ti. 
+        """
+
+        print(f"### layer.name={self.name} - input.shape={tj.shape}")
+
+
+        image_original_size = tj.shape[2]       # image size with no padding (as input) 
+        image_valid_size = image_original_size - self.kernel_size[0] + 1    # output filter size if 'valid' padding is used (no change)
+
+        kH = self.kernel_size[0]        # kernel height
+        kW = self.kernel_size[1]        # kernel width
+
+        # If the input spike times are the result from the previous layer, then the shape is [B, H, W, F]
+        # where (H,W) is the activation filter size and F is the number of filters. In this case the tensor's
+        # shape needs to be adapted for the F.pad() interface. The spike times at the input are already correct.
+        if not self.first_convolutional_layer:    
+            tj.permute(0,3,1,2)         # [B, H, W, F] -> [B, F, H, W]
+
+
+        # Add spatial padding to the spike times: pad=(left, right, top, bottom) 
+        # pad with 't_min' as it's equivalent to the relative 0 spike time in this layer
+        tj = F.pad(tj, pad=(1, 1, 1, 1), mode='constant', value=self.t_min)
+
+        tensor_batch = tj.clone().detach().squeeze(0)  # remove batch dimension → [C, H, W]
+
+    
+        ''' PATCHING: Extract image patches of size (kH, kW) across all input channels C which are S stride(s) apart from each other. 
+        This simulates the convolutional sliding window. Each patch is flattened into a 1D vector of shape P=(kH * kW * C, 0)
+        # The operation then collects each patch vector into the re-shaped output tensor of shape [B, O, O, P]
+        # where O stands for the size of the output activation filter. call_spiking function will be called for different patches in parallel.  
+
+        For example, for a padded CIFAR10 input spike tensor with shape [B, 34, 34, 3] and a kernel size (3,3):
+        As one patch also extracts the features from the channels, each patch will have a (flattened) shape of O = ((3*3) * 3) = (27) 
+        We can extract 32 patches in the width direction and 32 in the height direction. 
+        In total, all patches are collected in the output tensor with shape [B, 32, 32, 27]
+
+        In order 
+
+        ''' 
+
+        # See: https://stackoverflow.com/a/75186655
+        # tj = F.unfold(tj, self.kernel_size[0])
+
+        patches = tj.unfold(2, kH, 1).unfold(3, kW, 1)  # [B, C, H_out, W_out, kH, kW]
+        # Flatten the kernel dims
+        patches = patches.contiguous().view(1, 3, 32, 32, -1)  # [1, 3, 32, 32, 9]
+
+        # Merge channels and kernel into one dimension
+        patches = patches.permute(0, 2, 3, 1, 4)
+        patches = patches.reshape(1, 32, 32, -1)
+
+        config_utils.write_conv_tensor("torch_patched_tensor.txt", patches)
+
+        # re-shape the weight to match its shape to a single patch P so that both input and weights can be passed to call_spiking 
+        # for weight with 3 channels, kernel_size (kH, kW), filters F: [C, kH, kW, F] -> [P, F] 
+        patch_W = self.kernel.reshape(-1, self.filters)        # flatten all dimensions except last one 
+
+        tj = patches
+        # further partition the patches 
+        tj_partitioned = [tj[:, 1:-1, 1:-1, :], tj[:, :1, :1, :], tj[:, :1, 1:-1, :], tj[:, :1, -1:, :], tj[:, 1:-1, -1:, :], tj[:, -1:, -1:, :] , tj[:, -1:, 1:-1, :], tj[:, -1:, :1, :], tj[:, 1:-1, :1, :]]
+        ti_partitioned=[]
+        for i, tj_part in enumerate(tj_partitioned):
+            # Iterate over 9 different partitions and call call_spiking with different threshold value.
+            tj_part = tj_part.reshape(-1, patch_W.shape[0])
+            ti_part = call_spiking(tj_part, patch_W, self.D_i[i], self.t_min_prev, self.t_min, self.t_max, self.robustness_params)
+            # Partitions are reshaped back.
+            if i==0: ti_part=ti_part.reshape(-1, image_valid_size, image_valid_size, self.filters)
+            if i in [1, 3, 5, 7]: ti_part= ti_part.reshape(-1, 1, 1, self.filters)
+            if i in [2, 6]: ti_part= ti_part.reshape(-1, 1, image_valid_size, self.filters)
+            if i in [4, 8]: ti_part= ti_part.reshape(-1, image_valid_size, 1, self.filters) 
+            ti_partitioned.append(ti_part) 
+        # Partitions are concatenated to create a complete output.
+        if image_valid_size!=0:
+            ti_top_row = torch.cat( (ti_partitioned[1], ti_partitioned[2], ti_partitioned[3]), dim=2)
+            ti_middle = torch.cat( (ti_partitioned[8], ti_partitioned[0], ti_partitioned[4]), dim=2)
+            ti_bottom_row = torch.cat( (ti_partitioned[7], ti_partitioned[6], ti_partitioned[5]), dim=2)
+            ti = torch.cat ( (ti_top_row, ti_middle, ti_bottom_row), dim=1)
+
+        else:
+            ti_top_row = torch.cat( (ti_partitioned[1], ti_partitioned[3]), dim=2)
+            ti_bottom_row = torch.cat( (ti_partitioned[7], ti_partitioned[5]), dim=2)
+            ti = torch.cat( (ti_top_row, ti_bottom_row), dim=1)
+
+        config_utils.write_conv_tensor("torch_layer_result.txt", ti)
+        
+        # breakpoint()
+        print("output return: ti.shape=", ti.shape)
+        return ti
+
+
+class VGG_SNN_torch(nn.Module):
+    def __init__(self, X_n, kernel_size, robustness_params, kernel_regularizer=None, kernel_initializer=None, dropout=0):
+        super().__init__()
+        self.X_n = X_n
+        self.kernel_size = kernel_size
+
+        layers2D = [64, 64, 'pool', 128, 128, 'pool', 256, 256, 256, 'pool', 512, 512, 512, 'pool', 512, 512, 512, 'pool']
+        layers1D= [512]
+
+        self.conv_layers = nn.ModuleList()      # Conv blocks: [Conv -> ReLU -> MaxPool]
+        self.fc_layers = nn.ModuleList()        # Fully connected
+
+        image_size = 1
+        prev_layer_dim = 3      # num channels for input image
+        conv_index = 0
+        for filter in layers2D: 
+            if filter != 'pool':
+                X_n_layer = (X_n[conv_index] if type(X_n)==list else X_n)
+                layer_name = 'conv_' + str(conv_index)
+                conv2d = SpikingConv2DTorch(filter, prev_layer_dim, X_n=X_n_layer, 
+                                            padding='same', name=layer_name, robustness_params=robustness_params)
+                if conv_index == 0:
+                    conv2d.first_convolutional_layer = True 
+                self.conv_layers.append(conv2d)
+                conv_index += 1
+                prev_layer_dim = filter 
+
+            else: 
+                self.conv_layers.append(nn.MaxPool2d(kernel_size=2, stride=2))
+                image_size = image_size // 2
+
+        # fc_index = 0
+        # for dim in layers1D[1:]:
+        #     X_n_layer = (X_n[fc_index] if type(X_n)==list else X_n)
+        #     fc_layer = SpikingDenseTorch(dim, dim, X_n=X_n_layer)
+        #     self.fc_layers.append(fc_layer)
+        #     fc_index += 1
+
+        # Add one more dense layer for classification   
+        # # TODO: pass number of classes as layer output dimension
+        dim = layers1D[0]
+        self.fc_layer_out = SpikingDenseTorch(dim, 10, name="dense", X_n=X_n_layer, 
+                                              is_output=True, robustness_params=robustness_params)
+
+
+    def forward(self, input_spikes):
+
+        print("\nVGG model call: tj.shape=", input_spikes.shape)
+
+        x = input_spikes
+
+        for i, conv_block in enumerate(self.conv_layers):
+            if isinstance(conv_block, SpikingConv2DTorch):
+                print(f"### Convolution {i}")
+                x = conv_block(x)
+            else: 
+                # input to maxPool2d must be permuted again 
+                print("### MaxPool2d")
+                x = x.permute(0, 3, 1, 2)
+                x = conv_block(x)
+                x = x.permute(0, 2, 3, 1)   # permute back for convolution
+
+        x = torch.flatten(x, 1)
+
+        # for layer in self.fc_layers:
+        #     x = layer(x)
+
+        x = self.fc_layer_out(x)
+        return x
+    
+    def set_snn_intervals(self, t_min_start=0, t_max_start=1):
+        ''' Helper function to create the [t_min, t_max] boundaries for the 
+            integrate vs spike time windows for each layer. 
+            't_min_start' and 't_max_start' define the min/max time values in the input layer. 
+        '''
+        t_min, t_max= t_min_start, t_max_start
+        layer_num = 0
+
+        for conv_layer in self.conv_layers:
+            if isinstance(conv_layer, SpikingConv2DTorch):
+                print("setting: ", conv_layer.name)
+                print("conv_layer.rob=", conv_layer.robustness_params)
+                t_min, t_max = conv_layer.set_intervals(t_min, t_max)
+            else: 
+                print("setting maxpool")
+        
+        self.fc_layer_out.set_intervals(t_min, t_max)
 
 
 class FC_ReLU_torch(nn.Module):
@@ -497,3 +745,7 @@ def create_torch_fc_model_ReLU(layers=2, N_hid=340,N_in=784, N_out=10):
 def create_torch_fc_model_SNN(layers=2, N_hid=340, N_in=784, N_out=10, X_n=1000, robustness_params={}):
     ''' Returns an instance of a fully-connected SNN model '''
     return FC_SNN_torch(layers,N_hid,N_in,N_out,X_n,robustness_params=robustness_params, kernel_regularizer=None, kernel_initializer=None)
+
+def create_torch_VGG_model_SNN(X_n, kernel_size):
+    robustness_params = {'latency_quantiles': 1}
+    return VGG_SNN_torch(X_n, kernel_size, robustness_params=robustness_params)
