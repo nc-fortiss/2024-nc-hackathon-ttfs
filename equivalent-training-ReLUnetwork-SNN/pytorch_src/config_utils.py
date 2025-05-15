@@ -120,3 +120,11 @@ def preprocess_relu(model):
 
     return 0
 
+def convert_weights_tf_torch(tf_weights_path):
+    '''
+        Converts the weights from the VGG-16 tensorflow model to adapt them to 
+        the torch model weight requirements. 
+    '''
+
+
+    return 0

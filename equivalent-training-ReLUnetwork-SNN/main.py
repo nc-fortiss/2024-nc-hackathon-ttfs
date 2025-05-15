@@ -128,9 +128,26 @@ if args.load != 'False':
             model = create_vgg_model_SNN(layers2D, kernel_size, layers1D, data, optimizer, X_n=X_n, robustness_params=robustness_params,
                                      kernel_regularizer=regularizer, kernel_initializer=initializer)
         
+        def explore_group(g, indent=0):
+            for key in g:
+                item = g[key]
+                if isinstance(item, h5py.Group):
+                    print("  " * indent + f"[Group] {key}")
+                    explore_group(item, indent + 1)
+                elif isinstance(item, h5py.Dataset):
+                    print("  " * indent + f"{key}: shape={item.shape}")
+                else:
+                    print("  " * indent + f"{key}: unknown type {type(item)}")
+
         # check if a fully-trained SNN model exists
         if os.path.exists(args.logging_dir + '/' + args.model_name + '_full_SNN_weights.h5'):
-            model.load_weights(args.logging_dir + '/' + args.model_name + '_full_SNN_weights.h5', by_name=True)
+
+            # Open the HDF5 file
+            with h5py.File(args.logging_dir + '/' + args.model_name + '_full_SNN_weights.h5', 'r') as f:
+                explore_group(f)
+
+
+            # model.load_weights(args.logging_dir + '/' + args.model_name + '_full_SNN_weights.h5', by_name=True)
         # check if a convertible ANN model exists
         elif os.path.exists(args.logging_dir + args.model_name + '_preprocessed.h5'):
             model.load_weights(args.logging_dir + args.model_name + '_preprocessed.h5', by_name=True)
@@ -188,79 +205,79 @@ model(x_expanded)
 
 
 
-fig, ax = plt.subplots(3, 2, figsize=(10, 8))  # Now 3 rows × 2 cols
-plt.subplots_adjust(wspace=0.1, hspace=0.3)  # Adjust horizontal spacing
+# fig, ax = plt.subplots(3, 2, figsize=(10, 8))  # Now 3 rows × 2 cols
+# plt.subplots_adjust(wspace=0.1, hspace=0.3)  # Adjust horizontal spacing
 
-ax[0, 0].set_title("TTFS Input", pad=50)
-ax[0, 1].set_title("Input Spike Distribution", pad=50)
+# ax[0, 0].set_title("TTFS Input", pad=50)
+# ax[0, 1].set_title("Input Spike Distribution", pad=50)
 
-for i in range(3):
-    channel_np = x[:,:,i]
+# for i in range(3):
+#     channel_np = x[:,:,i]
     
-    # --- Left Column: Image + Text Label ---
-    im = ax[i, 0].imshow(channel_np, cmap='gray_r')
+#     # --- Left Column: Image + Text Label ---
+#     im = ax[i, 0].imshow(channel_np, cmap='gray_r')
     
-    # Add channel label inside the image subplot (left-aligned, vertically centered)
-    ax[i, 0].text(-0.65, 0.5, f'Channel {i+1}', 
-                 transform=ax[i, 0].transAxes,  # Uses axes coordinates (0-1)
-                 ha='right', va='center',
-                 fontsize=12,
-                 bbox=dict(facecolor='white', alpha=0.8, edgecolor='none'))
+#     # Add channel label inside the image subplot (left-aligned, vertically centered)
+#     ax[i, 0].text(-0.65, 0.5, f'Channel {i+1}', 
+#                  transform=ax[i, 0].transAxes,  # Uses axes coordinates (0-1)
+#                  ha='right', va='center',
+#                  fontsize=12,
+#                  bbox=dict(facecolor='white', alpha=0.8, edgecolor='none'))
 
-    # cbar = fig.colorbar(im, ax=ax[i, 0], fraction=0.046, pad=0.05, location='left')
-    # cbar.set_label('Intensity', fontsize=10) 
+#     # cbar = fig.colorbar(im, ax=ax[i, 0], fraction=0.046, pad=0.05, location='left')
+#     # cbar.set_label('Intensity', fontsize=10) 
     
-    # --- Right Column: Histogram ---
-    ax[i, 1].hist(channel_np.flatten(), bins=20, alpha=0.4)
-    ax[i, 1].set_xlim(0, 1)
-    ax[i, 1].set_xlabel("Spike Time")  
-    ax[i, 1].set_ylabel("Frequency") 
+#     # --- Right Column: Histogram ---
+#     ax[i, 1].hist(channel_np.flatten(), bins=20, alpha=0.4)
+#     ax[i, 1].set_xlim(0, 1)
+#     ax[i, 1].set_xlabel("Spike Time")  
+#     ax[i, 1].set_ylabel("Frequency") 
 
-plt.show()
+# plt.show()
 
-spike_times, t_max_values = [], []
-model = tf.keras.Model(inputs=model.inputs, outputs=model.outputs[0])
-layer_names = []
-for k, layer in enumerate(model.layers):
+# spike_times, t_max_values = [], []
+# model = tf.keras.Model(inputs=model.inputs, outputs=model.outputs[0])
+# layer_names = []
+# for k, layer in enumerate(model.layers):
 
-    if 'conv2d' in layer.name or 'dense' in layer.name:
-        if k!=len(model.layers)-2:
-            spike_times.append(layer.output)
-            t_max_values.append(layer.t_max)
-            layer_names.append(layer.name)
+#     if 'conv2d' in layer.name or 'dense' in layer.name:
+#         if k!=len(model.layers)-2:
+#             spike_times.append(layer.output)
+#             t_max_values.append(layer.t_max)
+#             layer_names.append(layer.name)
         
-model.compile(metrics=["categorical_accuracy"], loss=tf.keras.losses.CategoricalCrossentropy(from_logits=True),
-                optimizer=optimizer)    
+# model.compile(metrics=["categorical_accuracy"], loss=tf.keras.losses.CategoricalCrossentropy(from_logits=True),
+#                 optimizer=optimizer)    
 
 
-extractor_spks = tf.keras.Model(inputs=model.inputs, outputs=spike_times)
-output_intermediate_spikes = extractor_spks.predict(x_expanded, verbose=1)
+# extractor_spks = tf.keras.Model(inputs=model.inputs, outputs=spike_times)
+# output_intermediate_spikes = extractor_spks.predict(x_expanded, verbose=1)
 
-x_expanded = tf.expand_dims(x, axis=0)
-model(x_expanded)
+# x_expanded = tf.expand_dims(x, axis=0)
+# model(x_expanded)
 
-plt.figure(figsize=(10,6))
-# Plot latency distribution
-if output_intermediate_spikes is None:
-    print("there is nothing to plottttt")
-for i in range(len(output_intermediate_spikes)):
-    t_max_layer = t_max_values[i].numpy()
-    output_flat = output_intermediate_spikes[i].flatten()
-    # output_flat = output_flat[output_flat < t_max_layer]
-    # Plot the combined histogram
-    if i == 13: break
-    output_shape = output_flat.shape[0]
-    plt.hist(output_flat, bins=10, density=True, label=f'{layer_names[i]} - N={output_shape}')
+# plt.figure(figsize=(10,6))
+# # Plot latency distribution
+# if output_intermediate_spikes is None:
+#     print("there is nothing to plottttt")
+# for i in range(len(output_intermediate_spikes)):
+#     t_max_layer = t_max_values[i].numpy()
+#     output_flat = output_intermediate_spikes[i].flatten()
+#     # output_flat = output_flat[output_flat < t_max_layer]
+#     # Plot the combined histogram
+#     if i == 13: break
+#     output_shape = output_flat.shape[0]
+#     plt.hist(output_flat, bins=10, density=True, label=f'{layer_names[i]} - N={output_shape}')
 
-    print(f"--- {layer.name} ---")
-    print(f"--- mean={np.mean(output_flat)}; min={np.min(output_flat)}; max={np.max(output_flat)}")
+#     print(f"--- {layer.name} ---")
+#     print(f"--- mean={np.mean(output_flat)}; min={np.min(output_flat)}; max={np.max(output_flat)}")
 
-plt.title('Layer-wise Activations - CIFAR10 VGG16 Inference')
-plt.xlabel('Spiking Time')
-plt.ylabel('Frequency')
-plt.legend(loc='upper left')
-plt.grid(True)
-plt.show()
+# plt.title('Layer-wise Activations - CIFAR10 VGG16 Inference')
+# plt.xlabel('Spiking Time')
+# plt.ylabel('Frequency')
+# plt.legend(loc='upper left')
+# plt.grid(True)
+# plt.show()
 
 
 
@@ -292,6 +309,8 @@ if args.save and 'ReLU' in args.model_type:
     # Fuse (imaginary) batch normalization layers.
     logging.info('fuse (imaginary) BN layers')
     # shift/scale input data accordingly
+
+
     data.x_test, data.x_train = (data.x_test - data.p)/(data.q-data.p), (data.x_train - data.p)/(data.q-data.p)
     BN = 'BN' in args.model_name 
     model = fuse_bn(model, BN=BN, p=data.p, q=data.q, optimizer=optimizer)

@@ -70,8 +70,20 @@ def plot_membrane_potential(model, target_neurons, title_addition=''):
     # print("Potentials: ", potentials)
     # breakpoint()
 
+    import matplotlib as mpl
+    mpl.rcParams.update({
+        'font.size': 14,            # general font size
+        'axes.labelsize': 16,       # x/y label font
+        'axes.titlesize': 18,       # title font
+        'legend.fontsize': 13,      # legend font
+        'xtick.labelsize': 12,      # tick font
+        'ytick.labelsize': 12,
+        'font.family': 'serif',     # or 'sans-serif', 'Times New Roman' for papers
+    })
+
+
     # Start the plot 
-    fig, ax = plt.subplots(1, 1, figsize=(15, 10))
+    fig, ax = plt.subplots(1, 1, figsize=(12, 6), dpi=300)
 
     # --- Interval boundaries (t_min, t_max) --- #
     ax.axvline(x=model.hidden_layers[0].t_min, linestyle="--", color="black")

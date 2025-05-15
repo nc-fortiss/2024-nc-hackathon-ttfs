@@ -263,6 +263,7 @@ class SpikingConv2DTorch(nn.Module):
 
         image_original_size = tj.shape[2]       # image size with no padding (as input) 
         image_valid_size = image_original_size - self.kernel_size[0] + 1    # output filter size if 'valid' padding is used (no change)
+        image_same_size = tj.shape[2]
 
         kH = self.kernel_size[0]        # kernel height
         kW = self.kernel_size[1]        # kernel width
@@ -295,6 +296,7 @@ class SpikingConv2DTorch(nn.Module):
 
         ''' 
 
+
         # See: https://stackoverflow.com/a/75186655
         # tj = F.unfold(tj, self.kernel_size[0])
 
@@ -306,39 +308,20 @@ class SpikingConv2DTorch(nn.Module):
         patches = patches.permute(0, 2, 3, 1, 4)
         patches = patches.reshape(1, 32, 32, -1)
 
-        config_utils.write_conv_tensor("torch_patched_tensor.txt", patches)
+        # config_utils.write_conv_tensor("torch_patched_tensor.txt", patches)
 
         # re-shape the weight to match its shape to a single patch P so that both input and weights can be passed to call_spiking 
         # for weight with 3 channels, kernel_size (kH, kW), filters F: [C, kH, kW, F] -> [P, F] 
         patch_W = self.kernel.reshape(-1, self.filters)        # flatten all dimensions except last one 
 
-        tj = patches
-        # further partition the patches 
-        tj_partitioned = [tj[:, 1:-1, 1:-1, :], tj[:, :1, :1, :], tj[:, :1, 1:-1, :], tj[:, :1, -1:, :], tj[:, 1:-1, -1:, :], tj[:, -1:, -1:, :] , tj[:, -1:, 1:-1, :], tj[:, -1:, :1, :], tj[:, 1:-1, :1, :]]
-        ti_partitioned=[]
-        for i, tj_part in enumerate(tj_partitioned):
-            # Iterate over 9 different partitions and call call_spiking with different threshold value.
-            tj_part = tj_part.reshape(-1, patch_W.shape[0])
-            ti_part = call_spiking(tj_part, patch_W, self.D_i[i], self.t_min_prev, self.t_min, self.t_max, self.robustness_params)
-            # Partitions are reshaped back.
-            if i==0: ti_part=ti_part.reshape(-1, image_valid_size, image_valid_size, self.filters)
-            if i in [1, 3, 5, 7]: ti_part= ti_part.reshape(-1, 1, 1, self.filters)
-            if i in [2, 6]: ti_part= ti_part.reshape(-1, 1, image_valid_size, self.filters)
-            if i in [4, 8]: ti_part= ti_part.reshape(-1, image_valid_size, 1, self.filters) 
-            ti_partitioned.append(ti_part) 
-        # Partitions are concatenated to create a complete output.
-        if image_valid_size!=0:
-            ti_top_row = torch.cat( (ti_partitioned[1], ti_partitioned[2], ti_partitioned[3]), dim=2)
-            ti_middle = torch.cat( (ti_partitioned[8], ti_partitioned[0], ti_partitioned[4]), dim=2)
-            ti_bottom_row = torch.cat( (ti_partitioned[7], ti_partitioned[6], ti_partitioned[5]), dim=2)
-            ti = torch.cat ( (ti_top_row, ti_middle, ti_bottom_row), dim=1)
 
-        else:
-            ti_top_row = torch.cat( (ti_partitioned[1], ti_partitioned[3]), dim=2)
-            ti_bottom_row = torch.cat( (ti_partitioned[7], ti_partitioned[5]), dim=2)
-            ti = torch.cat( (ti_top_row, ti_bottom_row), dim=1)
+        tj = patches.reshape(-1, patch_W.shape[0])
+        x = 0 
+        y = 0
+        ti = call_spiking(tj, patch_W, self.D_i[0], self.t_min_prev, self.t_min, self.t_max, self.robustness_params)
+        # Layer output is reshaped back.
+        ti = ti.reshape(-1, image_same_size, image_same_size, self.filters)
 
-        config_utils.write_conv_tensor("torch_layer_result.txt", ti)
         
         # breakpoint()
         print("output return: ti.shape=", ti.shape)
@@ -425,13 +408,105 @@ class VGG_SNN_torch(nn.Module):
 
         for conv_layer in self.conv_layers:
             if isinstance(conv_layer, SpikingConv2DTorch):
-                print("setting: ", conv_layer.name)
-                print("conv_layer.rob=", conv_layer.robustness_params)
                 t_min, t_max = conv_layer.set_intervals(t_min, t_max)
             else: 
                 print("setting maxpool")
         
         self.fc_layer_out.set_intervals(t_min, t_max)
+
+class VGG_ReLU_torch(nn.Module):
+    def __init__(self, layers2D=[], kernel_size=(3,3), layers1D=[], BN=0, dropout=0, kernel_regularizer=None, kernel_initializer=None):
+        super().__init__()
+
+        self.kernel_size = kernel_size
+        in_channels=3 
+        num_classes=10
+
+        layers2D = [64, 64, 'pool', 128, 128, 'pool', 256, 256, 256, 'pool', 512, 512, 512, 'pool', 512, 512, 512, 'pool']
+        layers1D= [512]
+
+        self.features = self._create_conv_layers(layers2D, in_channels=in_channels)
+        self.classifier = nn.Sequential(
+            nn.Linear(512, 4096),
+            nn.ReLU(True),
+            nn.Dropout(),
+            nn.Linear(4096, 4096),
+            nn.ReLU(True),
+            nn.Dropout(),
+            nn.Linear(4096, num_classes)
+        )
+
+
+
+    def _create_conv_layers(self, filters, in_channels):
+
+        layers = nn.ModuleList()
+        for filter in filters:
+            if filter == 'pool':
+                layers.append(nn.MaxPool2d(kernel_size=2, stride=2))
+            else:
+                conv2d = nn.Conv2d(in_channels, filter, kernel_size=3, padding=1)
+                
+                layers.append(nn.Sequential(
+                    conv2d,
+                    nn.BatchNorm2d(filter), 
+                    nn.ReLU(inplace=True)
+                ))
+                in_channels = filter
+        return layers
+
+    def forward(self, x):
+        x = x.float()
+        for conv in self.features:
+            x = conv(x)
+        
+        x = torch.flatten(x,1)
+        x = self.classifier(x)
+        return x
+
+class VGG_ANN_torch(nn.Module):
+    def __init__(self, features_list, batch_norm=False):
+        super(VGG_ANN_torch, self).__init__()
+        self.features = self.make_layers(features_list, batch_norm=batch_norm)
+        self.classifier = nn.Sequential(
+            nn.Dropout(),
+            nn.Linear(512, 512),
+            nn.ReLU(True),
+            nn.Dropout(),
+            nn.Linear(512, 512),
+            nn.ReLU(True),
+            nn.Linear(512, 10),
+        )
+         # Initialize weights
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+                m.weight.data.normal_(0, math.sqrt(2. / n))
+                m.bias.data.zero_()
+
+
+    def forward(self, x):
+        x = self.features(x)
+        x = x.view(x.size(0), -1)
+        x = self.classifier(x)
+        return x
+
+    def make_layers(self, layer_architecture, batch_norm):
+        layers = []
+        in_channels = 3
+        for v in layer_architecture:
+            if v == 'M':
+                layers += [nn.MaxPool2d(kernel_size=2, stride=2)]
+            else:
+                conv2d = nn.Conv2d(in_channels, v, kernel_size=3, padding=1)
+                if batch_norm:
+                    layers += [conv2d, nn.BatchNorm2d(v), nn.ReLU(inplace=True)]
+                else:
+                    layers += [conv2d, nn.ReLU(inplace=True)]
+                in_channels = v
+        return nn.Sequential(*layers)
+
+
 
 
 class FC_ReLU_torch(nn.Module):
@@ -738,6 +813,55 @@ class FC_SNN_torch(nn.Module):
         return final_output_tensor
    
 
+
+class VGG(nn.Module):
+    def __init__(self, architecture_list):
+        super(VGG, self).__init__()
+
+        layers_instance_list = self.vgg(architecture_list)
+
+        self.features = nn.Sequential(*layers_instance_list)
+        self.classifier = nn.Sequential(
+            nn.Linear(512, 512, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.5),
+
+            nn.Linear(512, 256, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.5),
+
+            nn.Linear(256, 10, bias=False)
+        )
+
+        for m in self.modules():
+            # if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight.data)
+            if isinstance(m, nn.Linear):
+                nn.init.uniform_(m.weight, -0.1, 0.1)
+
+    def forward(self, x):
+        x = self.features(x)  
+        x = x.view(-1, 512)
+        x = self.classifier(x) 
+        return x
+    
+    def vgg(self, cfg, i=3, batch_norm=False):
+        layers = []
+        in_channels = i
+        for v in cfg:
+            if v == 'M':
+                layers += [nn.MaxPool2d(kernel_size=2, stride=2)]
+            else:
+                conv2d = nn.Conv2d(in_channels, v, kernel_size=3, padding=1, bias=False)
+                if batch_norm:
+                    layers += [conv2d, nn.BatchNorm2d(v), nn.ReLU(inplace=True)]
+                else:
+                    layers += [conv2d, nn.ReLU(inplace=True)]
+                in_channels = v
+        return layers
+
+
 def create_torch_fc_model_ReLU(layers=2, N_hid=340,N_in=784, N_out=10):
     ''' Returns instance of a fully-connected ReLU model '''
     return FC_ReLU_torch(layers, N_hid, N_in, N_out)
@@ -749,3 +873,15 @@ def create_torch_fc_model_SNN(layers=2, N_hid=340, N_in=784, N_out=10, X_n=1000,
 def create_torch_VGG_model_SNN(X_n, kernel_size):
     robustness_params = {'latency_quantiles': 1}
     return VGG_SNN_torch(X_n, kernel_size, robustness_params=robustness_params)
+
+def create_torch_VGG_model_ReLU():
+    return VGG_ReLU_torch()
+
+def create_torch_VGG_model_ANN(features_list, batch_norm=False):
+    
+    VGG_16_features_list = [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512, 'M']            # vgg 16 
+    VGG_19_features_list = [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256, 'M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M']
+
+    model_instance = VGG_ANN_torch(VGG_19_features_list, batch_norm=batch_norm)
+    model_instance = model_instance.double()
+    return model_instance

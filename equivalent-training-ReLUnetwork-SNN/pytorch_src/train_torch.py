@@ -5,6 +5,7 @@
 import torch
 import torch.nn.functional as F
 import config_utils
+import numpy as np
 
 def train_FC_SNN(model, train_loader, epochs, optimizer, scheduler):
     ''' Training loop for the fully-connected SNN, from scratch using BPTT '''
@@ -90,11 +91,13 @@ def evaluate_FC_SNN(model, test_loader):
     return [accuracy, test_loss]
 
 
-def train_FC_ReLU(model,train_data, optimizer,loss_criterion,epochs=5):
+def train_FC_ReLU(model,train_data, optimizer,loss_criterion,epochs=5, scheduler=None):
         '''
             Train the FC ReLU instance on the input 'train_data'. 
             Adapted from: https://pytorch.org/tutorials/beginner/blitz/cifar10_tutorial.html#train-the-network (Accessed 24/02/2025)
         '''
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model.to(device)
         model.train()
         train_acc = 0
         total = 0
@@ -102,11 +105,11 @@ def train_FC_ReLU(model,train_data, optimizer,loss_criterion,epochs=5):
 
             running_loss = 0.0
             for batch_idx, (data,target) in enumerate(train_data):
-
+                data = data.to(device)
+                target = target.to(device)
                 # breakpoint()
                 
                 optimizer.zero_grad()
-
                 outputs = model.forward(data)
                 loss = loss_criterion(outputs, target)
                 loss.backward()
@@ -120,8 +123,13 @@ def train_FC_ReLU(model,train_data, optimizer,loss_criterion,epochs=5):
                 # print statistics
                 running_loss += loss.item()
                 if batch_idx % 100 == 0:    
-                    config_utils.logging.info(f'[{epoch + 1}, {batch_idx + 1:5d}] loss: {running_loss / 100:.3f} --- acc: {round(train_acc / total, 2)}')
+                    train_acc_np = train_acc.cpu().detach().numpy()
+                    config_utils.logging.info(f'[{epoch + 1}, {batch_idx + 1:5d}] loss: {running_loss / 100:.3f} --- acc: {np.round(train_acc_np / total, 2)}')
                     running_loss = 0.0
+
+        if scheduler:
+            scheduler.step()
+
 
         config_utils.logging.info('Finished Training')
 

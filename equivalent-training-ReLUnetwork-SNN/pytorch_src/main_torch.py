@@ -85,54 +85,79 @@ dataset = Dataset_Torch(
 )
 
 
-layer = SpikingConv2DTorch(
-    filters=64,
-    kernel_size=(3, 3),
-    padding='same',
-    X_n=10,
-    in_channels=3,  
-    robustness_params={'noise': 0.0, 'latency_quantiles': 1.0}
-)
-
-layer.t_min = 1.0 
-layer.t_max = 11.6
-layer.first_convolutional_layer = True
-x_train = dataset.train_set
 
 x = dataset.train_set[0][0]     #1st image 
 x_batched = x.unsqueeze(0)      # extend with batch shape into [B, C, H, W]
+# x_batched = x_batched.float()
 
-
-print(x_batched.shape)
-print("\n")
-res = layer(x_batched)
-print("\nend of layer pass test\n")
+# print(x_batched.shape)
+# print("\n")
+# res = layer(x_batched)
+# print("\nend of layer pass test\n")
 
 X_n = [7.066748072435452, 79.91157541567785, 39.821228208764715, 22.539859687333525, 11.000932754264124, 10.471817021489022, 10.879581317272287, 9.355208734980877, 8.01244217113474, 8.970639901116368, 6.78019565952555, 3.729955484696675, 4.039098928722278, 3.646569651690345, 13.128600124904565]
 
-vgg = VGG_SNN_torch(X_n, (3,3), robustness_params={})
-vgg.set_snn_intervals(0,1)
-y = vgg(x_batched)
+# vgg_relu = VGG_ReLU_torch()
+# y = vgg_relu(x_batched)
+# print("\n\n### ReLU prediction= ###")
+# print(y)
 
-breakpoint()
+# optimizer = torch.optim.Adam(list(vgg_relu.parameters()), lr=args.lr, weight_decay=1e-4)    # applying regularization (weight_decay) turns out to be crucial for training
+# scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.9)      # step-wise learning rate adjustment
+# loss_fn = nn.CrossEntropyLoss()
+# # train_torch.train_FC_ReLU(vgg_relu, dataset.train_load, optimizer, loss_fn, epochs=args.epochs)
+
+
+# # vgg = VGG_SNN_torch(X_n, (3,3), robustness_params={})
+# # vgg.set_snn_intervals(0,1)
+# # y = vgg(x_batched)
+
+# layers2D = [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512, 'M']
+# model_ann = create_torch_VGG_model_ANN(layers2D, batch_norm=True)
+# y_ann = model_ann(x_batched)
+# print("ANN model prediction: ", y_ann)
+
+# layers_2D = [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512, 'M']
+# model = VGG(layers_2D)
+# y_ann = model_ann(x_batched)
+# print("ANN model prediction: ", y_ann)
+
 ''' Instantiate model '''
-X_n = [5.43, 4.5, 6.7]
 model = None 
-if 'SNN' in args.model_type:
-    config_utils.logging.info("### Create instance of FC_SNN: ###\n")
+if 'FC' in args.model_name:
+    if 'SNN' in args.model_type:
+        X_n = [5.43, 4.5, 6.7]
+        config_utils.logging.info("### Create instance of FC_SNN: ###\n")
+        if 'CIFAR' in args.model_name:
+            model = create_torch_fc_model_SNN(X_n=X_n, layers=args.layers, N_in=(32*32*3), N_hid=512, N_out=10, robustness_params=robustness_params)
+        else:
+            model = create_torch_fc_model_SNN(X_n=X_n, layers=args.layers, robustness_params=robustness_params)
 
-    if 'CIFAR' in args.model_name:
-        model = create_torch_fc_model_SNN(X_n=X_n, layers=args.layers, N_in=(32*32*3), N_hid=512, N_out=10, robustness_params=robustness_params)
-    else:
-        model = create_torch_fc_model_SNN(X_n=X_n, layers=args.layers, robustness_params=robustness_params)
+    elif 'ReLU' in args.model_type: 
+        config_utils.logging.info("### Create instance of FC_ReLU: ###\n")
 
-elif 'ReLU' in args.model_type: 
-    config_utils.logging.info("### Create instance of FC_ReLU: ###\n")
+        if 'CIFAR' in args.model_name:
+            model = create_torch_fc_model_ReLU(layers=args.layers, N_in=(32*32*3), N_hid=512, N_out=10)
+        else: 
+            model = create_torch_fc_model_ReLU(layers=args.layers)
+if 'VGG' in args.model_name:
+    # 15-layer VGG architecture; considering only CIFAR10 input for now
+    kernel_size=(3,3)
+    if 'SNN' in args.model_type:
+        layers2D = [64, 64, 'pool', 128, 128, 'pool', 256, 256, 256, 'pool', 512, 512, 512, 'pool', 512, 512, 512, 'pool']
+        layers1D=[512]
+        model = create_torch_VGG_model_SNN()
+    if 'ReLU' in args.model_type:
+        # for 'VGG_ANN_torch' class: https://github.com/chengyangfu/pytorch-vgg-cifar10/tree/master?tab=readme-ov-file
+        layers2D = [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512, 'M']
+        model = create_torch_VGG_model_ANN(layers2D, batch_norm=False)
 
-    if 'CIFAR' in args.model_name:
-        model = create_torch_fc_model_ReLU(layers=args.layers, N_in=(32*32*3), N_hid=512, N_out=10)
-    else: 
-        model = create_torch_fc_model_ReLU(layers=args.layers)
+        # for 'VGG' class: https://github.com/ppx-hub/PyTorch_VGG16_Cifar10
+        # layers_2D = [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512, 'M']
+        # model = VGG(layers_2D)
+        # model = model.double()
+
+
 
 if model is None: 
     print('Please specify a valid model. Exiting.')
@@ -146,11 +171,38 @@ config_utils.TRAIN_SHIFT = False
 if args.load != 'False':
     config_utils.logging.info("### Loading weights ###")
     if 'ReLU' in args.model_type:
-        # Load weights
-        if args.load == 'True':  # automatic name
-            model.load_weights(args.logging_dir + args.model_name + '_weights.h5', by_name=True)
-        else:  # custom name
-            model.load_weights(args.logging_dir + args.load, by_name=True)
+
+        if 'FC' in args.model_name:
+            # Load weights
+            if args.load == 'True':  # automatic name
+                model.load_weights(args.logging_dir + args.model_name + '_weights.h5', by_name=True)
+            else:  # custom name
+                model.load_weights(args.logging_dir + args.load, by_name=True)
+        elif 'VGG' in args.model_name:
+
+            # https://github.com/chengyangfu/pytorch-vgg-cifar10/tree/master?tab=readme-ov-file
+            config_utils.logging.info("### Loading VGG-ReLU pre-trained checkpoint")
+            checkpoint = torch.load("./logs/vgg_checkpoint_best.tar")  # or 'cuda' if using GPU
+            from collections import OrderedDict
+            new_state_dict = OrderedDict()
+            for key, value in checkpoint['state_dict'].items():
+                new_key = key.replace("module.", "")
+                new_state_dict[new_key] = value
+            model.load_state_dict(new_state_dict)
+
+            
+            # for 'VGG' class: https://github.com/ppx-hub/PyTorch_VGG16_Cifar10
+            # from collections import OrderedDict
+            # new_state_dict_path = './logs/cifar10_epoch_130.pth'
+            # state_dict = torch.load(new_state_dict_path)
+            
+            # # model.load_state_dict(torch.load(new_state_dict_path))
+            # new_state_dict = OrderedDict()
+            # for k, v in state_dict.items():
+            #     new_key = k.replace("module.", "")  # strip "module." prefix
+            #     new_state_dict[new_key] = v
+
+
     if 'SNN' in args.model_type:
         # Load X_n ranges from pre-trained ANN, if available
         if os.path.exists(args.logging_dir + args.model_name + '_SNN_X_n.pkl'):
@@ -198,16 +250,16 @@ tuple = dataset.train_set.__getitem__(0)
 x = tuple[0]
 config_utils.logging.info(f"Shape of input x: {(x.shape)}")
 y = model(x)
-# config_utils.logging.info(f"Model output: {y}")
+config_utils.logging.info(f"Model output: {y}")
 
-# image = x.view(dataset.input_shape[0], dataset.input_shape[1])
+image = x.view(dataset.input_shape[0], dataset.input_shape[1])
 
-# # Convert to numpy and plot
-# plt.imshow(image.numpy(), cmap='gray_r')
-# plt.title("Original 28x28 Image from Flattened Tensor")
-# plt.axis('off')
-# plt.show()
-# plotting.plot_input_tensor(image)
+# Convert to numpy and plot
+plt.imshow(image.numpy(), cmap='gray_r')
+plt.title("Original 28x28 Image from Flattened Tensor")
+plt.axis('off')
+plt.show()
+plotting.plot_input_tensor(image)
 
 # print(f"\n UNIQUE in x: {np.unique(x)}")
 
@@ -226,15 +278,17 @@ if args.testing == True:
 ''' Start training loop '''
 if args.epochs > 0:
     config_utils.logging.info("--- Train the model: ---\n")
-    optimizer = torch.optim.Adam(list(model.parameters()), lr=args.lr, weight_decay=1e-4)    # applying regularization (weight_decay) turns out to be crucial for training
-
-    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.9)      # step-wise learning rate adjustment
-    loss_fn = nn.CrossEntropyLoss()
-
+    
     if 'SNN' in args.model_type:
+        optimizer = torch.optim.Adam(list(model.parameters()), lr=args.lr, weight_decay=1e-4)    # applying regularization (weight_decay) turns out to be crucial for training
+        scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.9)      # step-wise learning rate adjustment
+        loss_fn = nn.CrossEntropyLoss()
         train_torch.train_FC_SNN(model, dataset.train_load, args.epochs, optimizer=optimizer, scheduler=scheduler)
     elif 'ReLU' in args.model_type:
-        train_torch.train_FC_ReLU(model, dataset.train_load, optimizer, loss_fn, epochs=args.epochs)
+        optimizer=torch.optim.SGD(model.parameters(), args.lr, momentum=0.9, weight_decay=5e-4)
+        loss_fn = nn.CrossEntropyLoss()
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.1)
+        train_torch.train_FC_ReLU(model, dataset.train_load, optimizer, loss_fn, epochs=args.epochs, scheduler=scheduler)
     
     config_utils.logging.info("--- Finished training the model ---")
 
@@ -329,8 +383,8 @@ if 'SNN' in args.model_type and model.N_layers >= 3:
     model.dump_activations(dump_path)
 
     
-    # plotting.plot_membrane_potential_path(model, dump_path, [min_spike_neuron_index, 40,200], title_addition='Forward Pass - Unoptimized')
-    # plotting.plot_output_spikes(dump_path, model=model, additional_title='\nForward Sample - Unoptimized')
+    plotting.plot_membrane_potential_path(model, dump_path, [min_spike_neuron_index, 40,200], title_addition='Forward Pass - Unoptimized')
+    plotting.plot_output_spikes(dump_path, model=model, additional_title='\nForward Sample - Unoptimized')
     
     model.collect_activations = False 
     print("\n### Accuracy without optimizations: ")

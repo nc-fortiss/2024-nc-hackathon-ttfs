@@ -194,6 +194,7 @@ def fuse_bn(model, p, q, optimizer, BN = True, BN_before_ReLU = False):
         Changes bias on locations where it is needed; 
         Transforms MaxPooling layers in MaxMinPooling layers and Conv2D layers in Conv2DWithBias.  
     """
+    breakpoint()
     logging.info("## Fusing BN layers ###")
     fused_model = tf.keras.Sequential()
     # Add input layer.
@@ -237,6 +238,7 @@ def fuse_bn(model, p, q, optimizer, BN = True, BN_before_ReLU = False):
                     i = fuse_bn_after_activation(fused_model, model, i)
                 i+=1
     else:
+        print("Create copy model")
         # If there is no batch normalization layers, copy model such that Conv2D and MaxPooling layers are replaced with ConvWithBias and MaxMinPooling respectively. 
         copy_model(fused_model, model, i)
     fused_model.compile(metrics=['accuracy'], loss=tf.keras.losses.CategoricalCrossentropy(from_logits=True), optimizer=optimizer)  

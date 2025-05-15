@@ -93,7 +93,10 @@ class SpikingConv2D(tf.keras.layers.Layer):
         """
         Input spiking times tj, output spiking times ti. 
         """
-        # print(f"### layer.name={self.name} - input.shape={tj.shape}")
+        # print(f"\n### layer.name={self.name}")
+        # print(f"input.shape=      {tj.shape}")
+        # print(f"weight.shape=     {self.kernel.shape}")
+        # print(f"filter.shape=     {self.filters}")
         # if self.debugging:
         #     breakpoint()
 
@@ -104,7 +107,7 @@ class SpikingConv2D(tf.keras.layers.Layer):
         # Pad input with t_min value, which is equivalent with 0 in ReLU network.
         tj=tf.pad(tj, tf.constant([[0, 0], [padding_size, padding_size,], [padding_size, padding_size], [0, 0]]), constant_values=self.t_min)
 
-        # print("padded tj.shape=", tj.shape)
+        # print("padded tj.shape= ", tj.shape)
         
         # if self.debugging:
         #     utils.write_tensor("tf_padded_tensor.txt", tj)
@@ -120,40 +123,43 @@ class SpikingConv2D(tf.keras.layers.Layer):
 
         # We reshape input and weights in order to utilize the same function as for the fully-connected layer.
         W = tf.reshape(self.kernel, (-1, self.filters))
-        if self.padding=='valid' or self.BN!=1 or self.BN_before_ReLU==1: 
-            # In this case the threshold is the same for whole input image.
-            tj = tf.reshape(tj, (-1, tf.shape(W)[0]))
-            ti = call_spiking(tj, W, self.D_i[0], self.t_min_prev, self.t_min, self.t_max, self.robustness_params)
-            # Layer output is reshaped back.
-            if self.padding=='valid':
-                ti = tf.reshape(ti, (-1, image_valid_size, image_valid_size, self.filters))
-            else:
-                ti = tf.reshape(ti, (-1, image_same_size, image_same_size, self.filters))
-        else:
-            # In this case there are 9 different thresholds for 9 different image partitions.
-            tj_partitioned = [tj[:, 1:-1, 1:-1, :], tj[:, :1, :1, :], tj[:, :1, 1:-1, :], tj[:, :1, -1:, :], tj[:, 1:-1, -1:, :], tj[:, -1:, -1:, :] , tj[:, -1:, 1:-1, :], tj[:, -1:, :1, :], tj[:, 1:-1, :1, :]]
+        # ### PREV: if self.padding=='valid' or self.BN!=1 or self.BN_before_ReLU==1: 
 
-            ti_partitioned=[]
-            for i, tj_part in enumerate(tj_partitioned):
-                # Iterate over 9 different partitions and call call_spiking with different threshold value.
-                tj_part = tf.reshape(tj_part, (-1, tf.shape(W)[0]))
-                ti_part = call_spiking(tj_part, W, self.D_i[i], self.t_min_prev, self.t_min, self.t_max, self.robustness_params)
-                # Partitions are reshaped back.
-                if i==0: ti_part=tf.reshape(ti_part, (-1, image_valid_size, image_valid_size, self.filters))
-                if i in [1, 3, 5, 7]: ti_part=tf.reshape(ti_part, (-1, 1, 1, self.filters))
-                if i in [2, 6]: ti_part=tf.reshape(ti_part, (-1, 1, image_valid_size, self.filters))
-                if i in [4, 8]: ti_part=tf.reshape(ti_part, (-1, image_valid_size, 1, self.filters))
-                ti_partitioned.append(ti_part) 
-            # Partitions are concatenated to create a complete output.
-            if image_valid_size!=0:
-                ti_top_row = tf.concat([ti_partitioned[1], ti_partitioned[2], ti_partitioned[3]], axis=2)
-                ti_middle = tf.concat([ti_partitioned[8], ti_partitioned[0], ti_partitioned[4]], axis=2)
-                ti_bottom_row = tf.concat([ti_partitioned[7], ti_partitioned[6], ti_partitioned[5]], axis=2)
-                ti = tf.concat([ti_top_row, ti_middle, ti_bottom_row], axis=1)         
-            else:
-                ti_top_row = tf.concat([ti_partitioned[1], ti_partitioned[3]], axis=2)
-                ti_bottom_row = tf.concat([ti_partitioned[7], ti_partitioned[5]], axis=2)
-                ti = tf.concat([ti_top_row, ti_bottom_row], axis=1)  
+        # In this case the threshold is the same for whole input image.
+        
+        tj = tf.reshape(tj, (-1, tf.shape(W)[0]))
+        ti = call_spiking(tj, W, self.D_i[0], self.t_min_prev, self.t_min, self.t_max, self.robustness_params)
+        # Layer output is reshaped back.
+        if self.padding=='valid':
+            ti = tf.reshape(ti, (-1, image_valid_size, image_valid_size, self.filters))
+        else:
+            ti = tf.reshape(ti, (-1, image_same_size, image_same_size, self.filters))
+
+        # else:
+        #     # In this case there are 9 different thresholds for 9 different image partitions.
+        #     tj_partitioned = [tj[:, 1:-1, 1:-1, :], tj[:, :1, :1, :], tj[:, :1, 1:-1, :], tj[:, :1, -1:, :], tj[:, 1:-1, -1:, :], tj[:, -1:, -1:, :] , tj[:, -1:, 1:-1, :], tj[:, -1:, :1, :], tj[:, 1:-1, :1, :]]
+
+        #     ti_partitioned=[]
+        #     for i, tj_part in enumerate(tj_partitioned):
+        #         # Iterate over 9 different partitions and call call_spiking with different threshold value.
+        #         tj_part = tf.reshape(tj_part, (-1, tf.shape(W)[0]))
+        #         ti_part = call_spiking(tj_part, W, self.D_i[i], self.t_min_prev, self.t_min, self.t_max, self.robustness_params)
+        #         # Partitions are reshaped back.
+        #         if i==0: ti_part=tf.reshape(ti_part, (-1, image_valid_size, image_valid_size, self.filters))
+        #         if i in [1, 3, 5, 7]: ti_part=tf.reshape(ti_part, (-1, 1, 1, self.filters))
+        #         if i in [2, 6]: ti_part=tf.reshape(ti_part, (-1, 1, image_valid_size, self.filters))
+        #         if i in [4, 8]: ti_part=tf.reshape(ti_part, (-1, image_valid_size, 1, self.filters))
+        #         ti_partitioned.append(ti_part) 
+        #     # Partitions are concatenated to create a complete output.
+        #     if image_valid_size!=0:
+        #         ti_top_row = tf.concat([ti_partitioned[1], ti_partitioned[2], ti_partitioned[3]], axis=2)
+        #         ti_middle = tf.concat([ti_partitioned[8], ti_partitioned[0], ti_partitioned[4]], axis=2)
+        #         ti_bottom_row = tf.concat([ti_partitioned[7], ti_partitioned[6], ti_partitioned[5]], axis=2)
+        #         ti = tf.concat([ti_top_row, ti_middle, ti_bottom_row], axis=1)         
+        #     else:
+        #         ti_top_row = tf.concat([ti_partitioned[1], ti_partitioned[3]], axis=2)
+        #         ti_bottom_row = tf.concat([ti_partitioned[7], ti_partitioned[5]], axis=2)
+        #         ti = tf.concat([ti_top_row, ti_bottom_row], axis=1)  
 
         # if self.debugging:
         #     breakpoint()
@@ -165,7 +171,7 @@ class SpikingConv2D(tf.keras.layers.Layer):
         # if self.debugging: 
         #     breakpoint()
 
-        # print("output return: ti.shape=", ti.shape)
+        # print("return: ti.shape=", ti.shape)
 
         return ti
 
