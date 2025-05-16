@@ -84,6 +84,7 @@ dataset = Dataset_Torch(
     ttfs_noise=args.noise,
 )
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 x = dataset.train_set[0][0]     #1st image 
@@ -182,7 +183,17 @@ if args.load != 'False':
 
             # https://github.com/chengyangfu/pytorch-vgg-cifar10/tree/master?tab=readme-ov-file
             config_utils.logging.info("### Loading VGG-ReLU pre-trained checkpoint")
-            checkpoint = torch.load("./logs/vgg_checkpoint_best.tar")  # or 'cuda' if using GPU
+
+            if device.type == "cuda":
+                checkpoint_path = "./logs/vgg_best_relu.pth.tar"
+            else:
+                checkpoint_path = "./logs/vgg_best_relu_cpu.pth.tar"
+
+            # Ensure file exists
+            assert os.path.exists(checkpoint_path), f"Checkpoint not found: {checkpoint_path} - download model from https://github.com/chengyangfu/pytorch-vgg-cifar10/tree/master?tab=readme-ov-file"
+
+            # Load checkpoint safely
+            checkpoint = torch.load(checkpoint_path, map_location=device)
             from collections import OrderedDict
             new_state_dict = OrderedDict()
             for key, value in checkpoint['state_dict'].items():
@@ -307,12 +318,20 @@ if args.testing and args.epochs > 0:
 if args.save == True:
     if 'ReLU' in args.model_type:
         config_utils.logging.info("\n\n#### Saving ReLU model ####")
-        # Save raw ANN weights (these can be used only for new ANN instances)
+        # 1. Save raw ANN weights (these can be used only for new ANN instances)
         save_path = args.logging_dir + args.model_name + '_weights.pth'
         torch.save(model.state_dict(), save_path) 
 
-        # Preprocess ANN weights so that they can be used for the SNN conversion (-- only relevant for VGG model)
+        # 2. Preprocess ANN weights so that they can be used for the SNN conversion (-- only relevant for VGG model)
         # TODO ? 
+        BN = 'BN' in args.model_name 
+        model = config_utils.fuse_bn(model, p=dataset.p, q=dataset.q, batch_normalization=BN)
+
+        breakpoint()
+
+
+
+
 
         # Save the optimal X_n ranges as the maximum ReLU activations
         config_utils.logging.info(f"### Maximum layer-wise ReLU activations: {model.max_activations}")
