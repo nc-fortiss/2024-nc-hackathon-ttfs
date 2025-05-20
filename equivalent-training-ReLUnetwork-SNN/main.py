@@ -111,8 +111,16 @@ if args.load != 'False':
         # Load weights
         if args.load == 'True':  # automatic name
             model.load_weights(args.logging_dir + args.model_name + '_weights.h5', by_name=True)
+
         else:  # custom name
             model.load_weights(args.logging_dir + args.load, by_name=True)
+            print("\n\n Dropping Model Weights here: ")
+            for layer in model.layers:
+                weights = layer.get_weights()
+                if weights:  # skip layers without weights
+                    print(f"Layer: {layer.name}")
+                    for w in weights:
+                        print(f"  Shape: {w.shape}  | Values (first few): {w.flatten()[:5]}")
     if 'SNN' in args.model_type:
         # Load X_n ranges from the max ANN activations, if available 
         if os.path.exists(args.logging_dir + args.model_name + '_X_n.pkl'):

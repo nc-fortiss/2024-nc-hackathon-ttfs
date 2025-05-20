@@ -66,17 +66,22 @@ class Conv2DWithBias(tf.keras.layers.Conv2D):
         
     def set_bias(self, bias, W=None, b_term=[0.0]):
         """
-        Creates bias variable and changes bias on certain locations when needed.
+            Creates bias variable and changes bias on certain locations when needed.
+            bias: [64, ]
+            W: [3,3,3,64]
+            b_term: [27, ]
         """
         # The bias Variable is added in this function and can have 9 potential values for each filter.
         # W can represent the kernel before fusion and b_term corresponds to the term which is multiplied with kernel (see Eqs. 9, 11, etc.).  
+
         self.bias = self.add_weight(shape=(9, self.filters), initializer='zeros', dtype=tf.float64, name='bias')
         self.use_custom_bias = True
         self.use_bias = False  # disable standard bias logic
         if W is not None: 
             # Calculate the overall kernel summation.
-            W_sum_2D  = tf.math.reduce_sum(W, axis=(0, 1))
-            b_term = b_term[:tf.shape(W)[2]]
+            W_sum_2D  = tf.math.reduce_sum(W, axis=(0, 1))      # [3,3,3,64] -> [3,64]  (summation over [H,W])
+            b_term = b_term[:tf.shape(W)[2]]            # [27, ] -> [3, ] (apply slicing)
+
         for i in range(9):
             # delta_sum_W calculates kernel summation of the weights which correspond to the zero-padded inputs for the particular image part. 
             if i==0:
@@ -161,7 +166,10 @@ def copy_layer(orig_layer):
         layer = Conv2DWithBias.from_config(config)
     else:
         layer = type(orig_layer).from_config(config)
-    layer.build(orig_layer.input_shape)
+
+    # at this point, the weight is still (randomly) initialized by default (e.g. with Glorot uniform) (so no weight transfer happens) 
+    # the weight is transferred from the orig_layer for the first time in fuse_bn_... implementation
+    layer.build(orig_layer.input_shape)            
     return layer
 
 
@@ -194,14 +202,15 @@ def fuse_bn(model, p, q, optimizer, BN = True, BN_before_ReLU = False):
         Changes bias on locations where it is needed; 
         Transforms MaxPooling layers in MaxMinPooling layers and Conv2D layers in Conv2DWithBias.  
     """
-    breakpoint()
     logging.info("## Fusing BN layers ###")
-    fused_model = tf.keras.Sequential()
-    # Add input layer.
+    fused_model = tf.keras.Sequential()             # new fused model that should be returned
+    # Add the InputLayer instance
     fused_model.add(copy_layer(model.layers[0]))
     i=1
     # If condition is satisfied, there is an imaginary batch normalization layer which is merged.
     if not (p==0 and q==1): i = fuse_imaginary_bn(fused_model, model, p, q)
+    print(fused_model.layers)
+    breakpoint()
     if BN:
         # There are batch normalization layers.
         if BN_before_ReLU:
@@ -219,9 +228,12 @@ def fuse_bn(model, p, q, optimizer, BN = True, BN_before_ReLU = False):
                 i+=1
         else:
             # Batch normalization layers are always found after ReLU activation function.
+            print(f"i before main loop={i}")
             while i<len(model.layers): 
                 # Add first Dense or Convolutional layer if there was no imaginary batch normalization.
+                print(f"in main loop: i={i} and model.layers[i].name={model.layers[i].name}")
                 if (p==0 and q==1) and i==1:
+                    print("p==0 and q==1")
                     layer = copy_layer(model.layers[1])
                     if 'conv' in model.layers[1].name:
                         kernel, bias = model.layers[1].get_weights()
@@ -235,6 +247,7 @@ def fuse_bn(model, p, q, optimizer, BN = True, BN_before_ReLU = False):
                     fused_model.add(copy_layer(model.layers[2]))
                 if 'batch_norm' in model.layers[i].name:
                     # Fuse this batch normalization layer with next convolutional or fully-connected layer.
+                    print(f"### fusing bn after activations. layer_name={model.layers[i].name} ###")
                     i = fuse_bn_after_activation(fused_model, model, i)
                 i+=1
     else:
@@ -250,20 +263,30 @@ def fuse_imaginary_bn(fused_model, model, p, q):
     Fuse an imaginary batch normalization layer due to an input on arbitrary [p, q] range different from [0, 1].
     """
     logging.info("### Imaginary fuse BN ###")
-    first_layer = model.layers[1]
-    input_image_shape, _, input_channels, _ = tf.shape(first_layer.kernel)
-    kappa = tf.cast(tf.fill((input_channels), value=q-p), dtype=tf.float64)
-    b_term=tf.cast(tf.fill((input_channels), value=p), dtype=tf.float64)
+    # --- Setup initial parameters
+    first_layer = model.layers[1]           # First convolutional layer (Conv2d)
+    input_image_shape, _, input_channels, _ = tf.shape(first_layer.kernel)       # (32, _, 3, _)
+    kappa = tf.cast(tf.fill((input_channels), value=q-p), dtype=tf.float64)      # [3,]
+    b_term=tf.cast(tf.fill((input_channels), value=p), dtype=tf.float64)         # [3,]
+
+    # If layer is convolutional, extend the parameters to account for 3 channels and kernel
     if 'conv' in first_layer.name:
-        kappa=tf.tile(kappa, [input_image_shape**2])
-        b_term=tf.tile(b_term, [input_image_shape**2])
-    W = tf.reshape(first_layer.kernel, (-1, first_layer.filters))
-    kappa = tf.linalg.diag(kappa)
-    W_fused = tf.matmul(kappa, W)
-    # See Eq. 13. 
-    W_fused = tf.reshape(W_fused, tf.shape(first_layer.kernel))   
-    # See Eq. 12. 
-    b_fused = first_layer.bias + tf.reduce_sum(tf.matmul(tf.linalg.diag(b_term), W), axis=0)
+        kappa=tf.tile(kappa, [input_image_shape**2])                # [27,]
+        b_term=tf.tile(b_term, [input_image_shape**2])              # [27,]
+
+    # --- Fusing the weight - See Eq. 13
+    W = tf.reshape(first_layer.kernel, (-1, first_layer.filters))   # [3,3,3,64] -> [27, 64]
+    kappa = tf.linalg.diag(kappa)       # [27,27]   
+    W_fused = tf.matmul(kappa, W)       # [27,27] * [27,64] -> [27,64]    
+    W_fused = tf.reshape(W_fused, tf.shape(first_layer.kernel))    # [3,3,3,64]
+
+    # --- Fusing bias -  See Eq. 12. 
+    b_term_diag = tf.linalg.diag(b_term)            # [27, ] -> [27,27]
+    b_term_W = tf.matmul(b_term_diag, W) # [27,27] @ [27,64] -> [27,64]
+    b_adjustment = tf.reduce_sum(b_term_W, axis=0)      # [64, ]
+
+    b_fused = first_layer.bias + b_adjustment  # [64, ]  
+        
     # Copy first convolutional or fully-connected layer.
     layer = copy_layer(first_layer)
     if 'conv' in first_layer.name:
@@ -276,7 +299,7 @@ def fuse_imaginary_bn(fused_model, model, p, q):
     else:
         layer.set_weights([W_fused, b_fused])
     fused_model.add(layer)
-    fused_model.add(copy_layer(model.layers[2]))  
+    fused_model.add(copy_layer(model.layers[2])) 
     return 3
 
 

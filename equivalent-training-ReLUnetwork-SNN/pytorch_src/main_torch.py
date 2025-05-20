@@ -85,7 +85,7 @@ dataset = Dataset_Torch(
 )
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
+config_utils.logging.info(f"Using device: {device}")
 
 x = dataset.train_set[0][0]     #1st image 
 x_batched = x.unsqueeze(0)      # extend with batch shape into [B, C, H, W]
@@ -150,6 +150,7 @@ if 'VGG' in args.model_name:
         model = create_torch_VGG_model_SNN()
     if 'ReLU' in args.model_type:
         # for 'VGG_ANN_torch' class: https://github.com/chengyangfu/pytorch-vgg-cifar10/tree/master?tab=readme-ov-file
+        # since the checkpoint was trained without BN layers, these will be added manually later (after loading the weights)
         layers2D = [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512, 'M']
         model = create_torch_VGG_model_ANN(layers2D, batch_norm=False)
 
@@ -199,9 +200,9 @@ if args.load != 'False':
             for key, value in checkpoint['state_dict'].items():
                 new_key = key.replace("module.", "")
                 new_state_dict[new_key] = value
+                print(f"key={key} - value.shape={value.shape}")
             model.load_state_dict(new_state_dict)
 
-            
             # for 'VGG' class: https://github.com/ppx-hub/PyTorch_VGG16_Cifar10
             # from collections import OrderedDict
             # new_state_dict_path = './logs/cifar10_epoch_130.pth'
@@ -255,22 +256,22 @@ if 'SNN' in args.model_type:
     config_utils.logging.info(f"output_layer: t_min={model.output_layer.t_min}, t_max={model.output_layer.t_max}\n")
 
 ''' Make a forward pass pre-training'''
-config_utils.logging.info("--- Attempt forward pass ---")
-model.eval()
-tuple = dataset.train_set.__getitem__(0)
-x = tuple[0]
-config_utils.logging.info(f"Shape of input x: {(x.shape)}")
-y = model(x)
-config_utils.logging.info(f"Model output: {y}")
+# config_utils.logging.info("--- Attempt forward pass ---")
+# model.eval()
+# tuple = dataset.train_set.__getitem__(0)
+# x = tuple[0]
+# config_utils.logging.info(f"Shape of input x: {(x.shape)}")
+# # y = model(x)
+# # config_utils.logging.info(f"Model output: {y}")
 
-image = x.view(dataset.input_shape[0], dataset.input_shape[1])
+# image = x.view(dataset.input_shape[0], dataset.input_shape[1])
 
-# Convert to numpy and plot
-plt.imshow(image.numpy(), cmap='gray_r')
-plt.title("Original 28x28 Image from Flattened Tensor")
-plt.axis('off')
-plt.show()
-plotting.plot_input_tensor(image)
+# # Convert to numpy and plot
+# plt.imshow(image.numpy(), cmap='gray_r')
+# plt.title("Original 28x28 Image from Flattened Tensor")
+# plt.axis('off')
+# plt.show()
+# plotting.plot_input_tensor(image)
 
 # print(f"\n UNIQUE in x: {np.unique(x)}")
 
@@ -310,7 +311,6 @@ if args.testing and args.epochs > 0:
 
     elif 'ReLU' in args.model_type:
         # TODO: collect activations
-        model.collect_activations = True 
         train_torch.evaluate_FC_ReLU(model, dataset.test_load)  
 
     
@@ -325,18 +325,19 @@ if args.save == True:
         # 2. Preprocess ANN weights so that they can be used for the SNN conversion (-- only relevant for VGG model)
         # TODO ? 
         BN = 'BN' in args.model_name 
-        model = config_utils.fuse_bn(model, p=dataset.p, q=dataset.q, batch_normalization=BN)
-
+        model = config_utils.preprocess_relu(model, p=dataset.p, q=dataset.q, batch_normalization=BN)
+        preprocessed_model = args.logging_dir + args.model_name + '_preprocessed.pth'
+        torch.save(model.state_dict(), preprocessed_model) 
         breakpoint()
-
-
-
-
+        model.collect_activations = True 
+        train_torch.evaluate_FC_ReLU(model, dataset.test_load)  
+        config_utils.logging.info("### Extracting X_n range from ReLU ###")
 
         # Save the optimal X_n ranges as the maximum ReLU activations
         config_utils.logging.info(f"### Maximum layer-wise ReLU activations: {model.max_activations}")
         X_n_list = [v for v in model.max_activations.values()]
         pkl.dump(X_n_list, open(args.logging_dir + '/' + args.model_name + '_X_n.pkl', 'wb'))
+        config_utils.logging.info(f"### Saving pre-processed ReLU weights and X_n={X_n_list}")
 
     if 'SNN' in args.model_type:
         # save the SNN when trained to avoid re-training (this is NOT the ANN-SNN conversion step)

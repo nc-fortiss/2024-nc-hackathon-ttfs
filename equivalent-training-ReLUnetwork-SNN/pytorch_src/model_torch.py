@@ -327,7 +327,6 @@ class SpikingConv2DTorch(nn.Module):
         print("output return: ti.shape=", ti.shape)
         return ti
 
-
 class VGG_SNN_torch(nn.Module):
     def __init__(self, X_n, kernel_size, robustness_params, kernel_regularizer=None, kernel_initializer=None, dropout=0):
         super().__init__()
@@ -506,9 +505,6 @@ class VGG_ANN_torch(nn.Module):
                 in_channels = v
         return nn.Sequential(*layers)
 
-
-
-
 class FC_ReLU_torch(nn.Module):
     ''' Defines instance of a fully-connected ReLU network
 
@@ -603,7 +599,6 @@ class FC_ReLU_torch(nn.Module):
                     self.all_activations[layer_name] = []     
                 self.all_activations[layer_name].extend(output.flatten().detach().cpu().tolist())
         return hook
-
 
 class FC_SNN_torch(nn.Module):
     ''' Defines instance of a fully-connected SNN model
@@ -812,8 +807,6 @@ class FC_SNN_torch(nn.Module):
         final_output_tensor = self.output_layer.discrete_forward(delta_k, discrete_3d_spike_tensor)
         return final_output_tensor
    
-
-
 class VGG(nn.Module):
     def __init__(self, architecture_list):
         super(VGG, self).__init__()
@@ -882,6 +875,6 @@ def create_torch_VGG_model_ANN(features_list, batch_norm=False):
     VGG_16_features_list = [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512, 'M']            # vgg 16 
     VGG_19_features_list = [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256, 'M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M']
 
-    model_instance = VGG_ANN_torch(VGG_19_features_list, batch_norm=batch_norm)
+    model_instance = VGG_ANN_torch(VGG_19_features_list, batch_norm=False)
     model_instance = model_instance.double()
     return model_instance
