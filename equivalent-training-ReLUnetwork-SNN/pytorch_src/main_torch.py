@@ -96,7 +96,8 @@ x_batched = x.unsqueeze(0)      # extend with batch shape into [B, C, H, W]
 # res = layer(x_batched)
 # print("\nend of layer pass test\n")
 
-X_n = [7.066748072435452, 79.91157541567785, 39.821228208764715, 22.539859687333525, 11.000932754264124, 10.471817021489022, 10.879581317272287, 9.355208734980877, 8.01244217113474, 8.970639901116368, 6.78019565952555, 3.729955484696675, 4.039098928722278, 3.646569651690345, 13.128600124904565]
+X_n = [29.42086506237534, 34.450538335694276, 30.785553786584888, 27.5460055582771, 10.989543557530785, 6.478216808839528, 3.0778573606522057, 3.291629995031852, 2.2797557470166696, 1.7795048423571254, 2.143186786635186, 3.6533283238052543, 5.012366602775877, 8.345400717089968, 9.941025336158555, 7.942578066382459, 8.45189789675977, 23.3113235452318, 54.738283740042064]
+
 
 # vgg_relu = VGG_ReLU_torch()
 # y = vgg_relu(x_batched)
@@ -147,7 +148,7 @@ if 'VGG' in args.model_name:
     if 'SNN' in args.model_type:
         layers2D = [64, 64, 'pool', 128, 128, 'pool', 256, 256, 256, 'pool', 512, 512, 512, 'pool', 512, 512, 512, 'pool']
         layers1D=[512]
-        model = create_torch_VGG_model_SNN()
+        model = create_torch_VGG_model_SNN(X_n=X_n, kernel_size=(2,2))
     if 'ReLU' in args.model_type:
         # for 'VGG_ANN_torch' class: https://github.com/chengyangfu/pytorch-vgg-cifar10/tree/master?tab=readme-ov-file
         # since the checkpoint was trained without BN layers, these will be added manually later (after loading the weights)
@@ -223,12 +224,19 @@ if args.load != 'False':
 
         if os.path.exists(args.logging_dir + args.model_name + '_X_n.pkl'):
             X_n = pkl.load(open(args.logging_dir + args.model_name + '_X_n.pkl', 'rb'))
+            config_utils.logging.info(f"### Loading X_n ranges from ANN testing - X_n={X_n}")
         else:
             X_n = [5.43, 4.5, 6.7] 
 
-        if 'FC2' in args.model_name:
+        if 'FC' in args.model_name:
             config_utils.logging.info(f"### Create new SNN model instance with loaded X_n = {X_n} ###\n")
             model = create_torch_fc_model_SNN(X_n=X_n, layers=args.layers, robustness_params=robustness_params)
+        
+        elif 'VGG' in args.model_name: 
+            X_n= [7.066748072435452, 79.91157541567785, 39.821228208764715, 22.539859687333525, 11.000932754264124, 10.471817021489022, 10.879581317272287, 9.355208734980877, 8.01244217113474, 8.970639901116368, 6.78019565952555, 3.729955484696675, 4.039098928722278, 3.646569651690345, 13.128600124904565]
+            config_utils.logging.info(f"### Create new SNN VGG model instance with loaded X_n = {X_n} ###\n")
+            model = create_torch_VGG_model_SNN(X_n=X_n, kernel_size=(2,2))
+            
 
         # After creating model instance with new X_n ranges, load the weights
         if os.path.exists(args.logging_dir + args.model_name + '_full_snn_weights.pth'):
@@ -237,10 +245,43 @@ if args.load != 'False':
             args.testing=True
             model.load_state_dict(torch.load(load_path, weights_only=True))
         else: 
-            config_utils.logging.info("### Loading converted ANN weights")
-            load_path = args.logging_dir + args.model_name + '_weights.pth'
-            config_utils.load_ANN_weights(model, load_path)
+            config_utils.logging.info("\n\n### Loading CONVERTED EQUIVALENT ANN weights")
+            load_path = args.logging_dir + args.model_name + '_preprocessed.pth'
+            config_utils.logging.info(f"Loading from path={load_path}")
 
+            # print("\n\nprint model architecture and structure")
+            # print(model)
+            # print("\n\n Print named layer-wise modules")
+            # for name, module in model.named_modules():
+            #     if hasattr(module, "name"):
+            #         print(f"Module path: {name}, custom name: {module.name}")
+            
+            # print("\n\n print trainable weights with names and shape")
+            # for name, param in model.named_parameters():
+            #     if param.requires_grad:
+            #         print(f"{name}: {param.shape}")
+
+            # print("\n\n print loaded weights structure")
+            # state_dict = torch.load(load_path, map_location="cpu")
+            # for name, tensor in state_dict.items():
+            #     print(f"{name}: shape={tensor.shape}")
+
+            breakpoint()
+            config_utils.load_VGG_weights(model, load_path)
+
+        print("Final SNN model with loaded weights and X_n range: ")
+        print(model)
+        for name, param in model.named_parameters():
+            if param.requires_grad:
+                print(f"{name}: {param.shape}")
+
+        # print("\n\n Check on MaxMinPool2d layers")
+        # for name, module in model.named_modules():
+        #     if hasattr(module, "name"):
+        #         if 'pool' in module.name: 
+        #             print(f"{module.name} - {module.sign}")
+
+            
 
     
 ''' Iterate over each hidden layer, plus the output layer, 
@@ -250,19 +291,74 @@ if 'SNN' in args.model_type:
     config_utils.logging.info("### Setting SNN intervals ####")
     model.set_snn_intervals(0,1)
 
-    config_utils.logging.info("### Print layer interval boundaries BEFORE training ###")
-    for n, layer in enumerate(model.hidden_layers):
-        config_utils.logging.info(f"layer_{n}: t_min={layer.t_min}, t_max={layer.t_max}")
-    config_utils.logging.info(f"output_layer: t_min={model.output_layer.t_min}, t_max={model.output_layer.t_max}\n")
+    if 'FC' in args.model_name:
 
+        config_utils.logging.info("### Print layer interval boundaries BEFORE training (FC model) ###")
+        for n, layer in enumerate(model.hidden_layers):
+            config_utils.logging.info(f"layer_{n}: t_min={layer.t_min}, t_max={layer.t_max}")
+        config_utils.logging.info(f"output_layer: t_min={model.output_layer.t_min}, t_max={model.output_layer.t_max}\n")
+
+    elif 'VGG' in args.model_name: 
+        config_utils.logging.info("### Print layer interval boundaries BEFORE training (VGG model) ###")
+        conv_index = 0
+        for layer in model.features:
+            if isinstance(layer, SpikingConv2DTorch):
+                config_utils.logging.info(f"Conv Layer_{conv_index}: t_min={layer.t_min}, t_max={layer.t_max}")
+                conv_index += 1 
+        dense_index = 0
+        for layer in model.classifier: 
+            if isinstance(layer, SpikingDenseTorch):
+                config_utils.logging.info(f"Dense Layer_{dense_index}: t_min={layer.t_min}, t_max={layer.t_max}")
+                dense_index += 1 
+        
+print("\n\n\n")
 ''' Make a forward pass pre-training'''
-# config_utils.logging.info("--- Attempt forward pass ---")
-# model.eval()
-# tuple = dataset.train_set.__getitem__(0)
-# x = tuple[0]
-# config_utils.logging.info(f"Shape of input x: {(x.shape)}")
-# # y = model(x)
-# # config_utils.logging.info(f"Model output: {y}")
+config_utils.DEBUG_MODE = False
+config_utils.logging.info("--- Attempt forward pass ---")
+model.eval()
+tuple = dataset.train_set.__getitem__(0)
+x = tuple[0]
+label = tuple[1]
+
+image_np = x.numpy().transpose((1, 2, 0))
+
+# Plot the image
+plt.imshow(image_np)
+plt.title(f'Label: {label}')
+plt.axis('off')
+plt.show()
+
+
+x_unsqueezed = x.unsqueeze(0)
+print("mean(x)=", np.mean(x_unsqueezed.detach().numpy()))
+config_utils.logging.info(f"Shape of input x: {(x_unsqueezed.shape)}")
+model.collect_activations = True 
+y = model(x_unsqueezed)
+print(f"\n\n Predicted {torch.argmax(y)} \n\n")
+path = './logs/nobatch_activations.npz'
+model.dump_activations(path)
+plotting.plot_output_spikes(path, model)
+breakpoint()
+model.collect_activations = False
+# config_utils.logging.info(f"Model output: {y}")
+#### REPEAT ####
+config_utils.logging.info("--- Attempt forward pass ---")
+tuple = dataset.train_set.__getitem__(3)
+x = tuple[0]
+x_unsqueezed = x.unsqueeze(0)
+config_utils.logging.info(f"Shape of input x: {(x_unsqueezed.shape)}")
+y = model(x_unsqueezed)
+print(f"\n\n Predicted {torch.argmax(y)} \n\n")
+#### REPEAT ####
+config_utils.logging.info("--- Attempt forward pass ---")
+tuple = dataset.train_set.__getitem__(10)
+x = tuple[0]
+x_unsqueezed = x.unsqueeze(0)
+config_utils.logging.info(f"Shape of input x: {(x_unsqueezed.shape)}")
+y = model(x_unsqueezed)
+print(f"\n\n Predicted {torch.argmax(y)} \n\n")
+
+
 
 # image = x.view(dataset.input_shape[0], dataset.input_shape[1])
 
@@ -326,18 +422,25 @@ if args.save == True:
         # TODO ? 
         BN = 'BN' in args.model_name 
         model = config_utils.preprocess_relu(model, p=dataset.p, q=dataset.q, batch_normalization=BN)
-        preprocessed_model = args.logging_dir + args.model_name + '_preprocessed.pth'
-        torch.save(model.state_dict(), preprocessed_model) 
-        breakpoint()
-        model.collect_activations = True 
-        train_torch.evaluate_FC_ReLU(model, dataset.test_load)  
-        config_utils.logging.info("### Extracting X_n range from ReLU ###")
+        preprocessed_model_path = args.logging_dir + args.model_name + '_preprocessed.pth'
+        torch.save(model.state_dict(), preprocessed_model_path) 
 
-        # Save the optimal X_n ranges as the maximum ReLU activations
-        config_utils.logging.info(f"### Maximum layer-wise ReLU activations: {model.max_activations}")
-        X_n_list = [v for v in model.max_activations.values()]
-        pkl.dump(X_n_list, open(args.logging_dir + '/' + args.model_name + '_X_n.pkl', 'wb'))
-        config_utils.logging.info(f"### Saving pre-processed ReLU weights and X_n={X_n_list}")
+        for name, param in model.state_dict().items():
+            print(f"{name}: {param.shape}")
+        breakpoint()
+        # model.register_max_activation_forward_hooks()
+        # model = model.double()
+        # model.collect_activations = True 
+        # train_torch.evaluate_FC_ReLU(model, dataset.test_load)  
+        # config_utils.logging.info("### Extracting X_n range from ReLU ###")
+
+        # # Save the optimal X_n ranges as the maximum ReLU activations
+        # config_utils.logging.info(f"### Maximum layer-wise ReLU activations: {model.max_activations}")
+        # X_n_list = [v for v in model.max_activations.values()]
+        # pkl.dump(X_n_list, open(args.logging_dir + '/' + args.model_name + '_X_n.pkl', 'wb'))
+        # config_utils.logging.info(f"### Saving pre-processed ReLU weights and X_n={X_n_list}")
+
+
 
     if 'SNN' in args.model_type:
         # save the SNN when trained to avoid re-training (this is NOT the ANN-SNN conversion step)
@@ -436,7 +539,7 @@ if 'SNN' in args.model_type and model.N_layers >= 3:
     model.collect_activations = False   
     print("\nAccuracy with threshold adjustment")  
     # breakpoint()
-    evaluate_FC_SNN(model, dataset.test_load)
+    train_torch.evaluate_FC_SNN(model, dataset.test_load)
     print(f"output_layer.t_min={model.output_layer.t_min}\n\n")
 
     ''' --------------- Apply Discretization -------------- '''

@@ -27,6 +27,7 @@ class SpikingDense(tf.keras.layers.Layer):
         self.kernel = self.add_weight(shape=(input_dim[-1], self.units), name='kernel', regularizer=self.regularizer, initializer=self.initializer)
         self.D_i = self.add_weight(shape=(self.units), initializer=tf.constant_initializer(0), name='D_i')
         self.built = True
+        # breakpoint()
     
     def set_params(self, t_min_prev, t_min):
         """
@@ -386,18 +387,20 @@ def call_spiking(tj, W, D_i, t_min_prev, t_min, t_max, robustness_params):
     threshold = t_max - t_min - D_i
 
     #### For debugging only ####
+    if utils.DEBUG_MODE:
+        breakpoint()
 
     # print(f"tj.shape={tj.shape} --- W.shape={W.shape}")
     
     # breakpoint()
-    if (utils.BATCHES > 0 and utils.BATCHES % 500 == 0) or (utils.BATCHES > 7000):
+    # if (utils.BATCHES > 0 and utils.BATCHES % 500 == 0) or (utils.BATCHES > 7000):
         
-        print("call spiking")
-        print("t_min=", t_min)
-        print("t_max=", t_max)
-        # print("Input tj=", tf.get_static_value(tj))
-        print("D_i=", D_i)
-        print("threshold= ",tf.get_static_value(threshold))
+    #     print("call spiking")
+    #     print("t_min=", t_min)
+    #     print("t_max=", t_max)
+    #     # print("Input tj=", tf.get_static_value(tj))
+    #     print("D_i=", D_i)
+    #     print("threshold= ",tf.get_static_value(threshold))
         # logging.info("Weight W=", tf.get_static_value(W))
         # breakpoint()
     # Calculate output spiking time ti (Eq. 7)
@@ -405,6 +408,9 @@ def call_spiking(tj, W, D_i, t_min_prev, t_min, t_max, robustness_params):
     # Ensure valid spiking time. Do not spike for ti >= t_max.
     # No spike is modelled as t_max that cancels out in the next layer (tj-t_min) as t_min there is t_max
     ti = tf.where(ti < t_max, ti, t_max)
+
+    print(f"spikes={tf.math.count_nonzero(ti < t_max)}")
+
     # Add noise to the spiking time for noise simulations
     ti = ti + tf.random.normal(tf.shape(ti), stddev=robustness_params['noise'], dtype=tf.dtypes.float64)
 

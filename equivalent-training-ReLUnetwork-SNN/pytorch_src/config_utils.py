@@ -10,7 +10,7 @@ from torchvision import models
 from torch.nn.utils import fuse_conv_bn_eval
 from collections import OrderedDict
 import copy
-
+from model_torch import SpikingConv2DTorch, SpikingDenseTorch
 
 '''
     Module containing global configuration settings and logging / utility functions
@@ -74,7 +74,7 @@ class Conv2dWithBias(nn.Conv2d):
         self.register_buffer("BN_before_ReLU", torch.tensor([0], dtype=torch.uint8))
         self.use_custom_bias = False
 
-    def set_custom_bias(self, base_bias, W=None, b_term=[0.0]):
+    def set_custom_bias(self, base_bias, W=None, b_term=[0.0], out_channels=None ):
         """
             Creates per-location biases for handling padded boundaries during BN fusion.
             base_bias: [64, ]
@@ -82,8 +82,16 @@ class Conv2dWithBias(nn.Conv2d):
             b_term: [27, ]      - shorthand: b0 := b_term[0]
         """
         self.use_custom_bias = True
-        out_channels = W.shape[0]
-        self.custom_bias = nn.Parameter(torch.zeros(9, out_channels, dtype=torch.float64), requires_grad=False)
+
+        if W is None: 
+            self.out_channels = out_channels
+        else: 
+            self.out_channles = W.shape[0]
+
+        self.custom_bias = nn.Parameter(torch.zeros(9, self.out_channels, dtype=torch.float64), requires_grad=False)
+
+        if isinstance(b_term, list):
+            b_term = torch.tensor(b_term, dtype=torch.float64)
 
         if W is not None: 
             W_sum_2D = torch.sum(W, dim=(2, 3))     # sum over [H,W] => [64,3,3,3] -> [64,3]        # if matching tf,  W_sum_2D.ranspose(0, 1)
@@ -161,25 +169,38 @@ class Conv2dWithBias(nn.Conv2d):
         return out_
 
 class MaxMinPool2d(nn.Module):
-    def __init__(self, kernel_size=2, stride=2):
+    def __init__(self, kernel_size=2, stride=2, name=''):
         super().__init__()
         self.pool = nn.MaxPool2d(kernel_size, stride)
         self.register_buffer("sign", None)  # shape: [1, C, 1, 1]
+        self.name = name
 
     def build(self, input_shape):
         channels = input_shape[1]
         self.sign = torch.ones((1, channels, 1, 1))
 
     def forward(self, x):
+
+        if DEBUG_MODE:
+            breakpoint()
+
         if self.sign is None:
             # Initialize to all ones: shape[1,C,1,1]
-            self.sign = torch.ones(1, x.shape[1], 1, 1, device=x.device, dtype=x.dtype)
+
+            # For version loading from h5 ("forced" initialization)
+            raise RuntimeError("sign buffer not initialized — must be loaded before use")
+            # self.sign = torch.ones(1, x.shape[1], 1, 1, device=x.device, dtype=x.dtype)
 
         signed_input = self.sign * x
-        pooled = self.max_pool(signed_input)
-        return pooled * self.sign
+        pooled = self.pool(signed_input)
+        res = pooled * self.sign 
+        return res
 
 def copy_layer(orig_layer): 
+
+    if isinstance(orig_layer, tuple):
+        orig_layer = orig_layer[1]
+
     if isinstance(orig_layer, nn.Conv2d):
         print("Converting Conv2D Layer to Conv2DBias")
         # Convert to Conv2dWithBias
@@ -200,34 +221,59 @@ def copy_layer(orig_layer):
         print("Converting MaxPool2D Layer to MaxMinPool2D")
         return MaxMinPool2d(kernel_size=orig_layer.kernel_size, stride=orig_layer.stride)
     else:
+        print("Creating deep copy of a layer with a general type")
         return copy.deepcopy(orig_layer)
-
-def copy_model(model, p, q):
-
-    layer_index = 0 
-    new_model = OrderedDict()
-    if not (p==0 and q==1): layer_index = fuse_imaginary_bn_input(new_model, model, p, q)
     
-    conv_layers = list(model.features.named_children())
+def copy_model(model, p, q):
+    
+    print("\n\COPY the entire model from scratch")
+    layer_index = 0 
+    new_features = OrderedDict()
+    if not (p==0 and q==1): layer_index = fuse_imaginary_bn_input(new_features, model.features, p, q)
+    print("After fusing imaginary BN input:")
+    print(new_features)
+
+    # Convert to list instead of dict 
+    new_features_list = []
+    for name, layer in new_features.items():
+        new_features_list.append(layer)
+
+    breakpoint()
+    conv_layers = list(model.features)
     while layer_index < len(conv_layers):
-        cur_layer = conv_layers[cur_layer]
+        cur_layer = conv_layers[layer_index]
         if isinstance(cur_layer, nn.Dropout):
             layer_index += 1
+            continue 
         fused_layer = copy_layer(cur_layer)
 
         if isinstance(cur_layer, nn.Conv2d):
             W = cur_layer.weight 
+            out_channels = W.shape[0]
             b = cur_layer.bias 
 
-            fused_layer.set_custom_bias(b)
+            fused_layer.set_custom_bias(base_bias=b, out_channels=out_channels)
         
-        new_model[f"{layer_index}_layer"] = fused_layer
+        new_features_list.append(fused_layer)
+        layer_index += 1
 
-    
+    new_classifier_list = []
+    flat_layer_index = 0
+    flat_layers = list(model.classifier.named_children())
+    while flat_layer_index < len(flat_layers):
+        cur_layer = flat_layers[flat_layer_index]
+        if isinstance(cur_layer, nn.Dropout): 
+            flat_layer_index += 1 
+            continue 
+        new_layer = copy_layer(cur_layer)
+        new_classifier_list.append(new_layer) 
+        flat_layer_index += 1 
 
-    return new_model         
-
-
+    print(new_features_list)
+    print(new_classifier_list)
+    model.features = nn.Sequential(*new_features_list)
+    model.classifier = nn.Sequential(*new_classifier_list)
+    return model         
 
 def load_ANN_weights(snn_model, load_path):
     '''
@@ -277,6 +323,115 @@ def load_ANN_weights(snn_model, load_path):
     plt.tight_layout()
     plt.show()
     '''
+
+def load_VGG_weights(target_snn_model, load_path):
+    # ann_state_dict = torch.load(load_path)
+    ann_state_dict = {}
+    name_matching = True 
+
+    if not name_matching:
+        ann_weights_list = list(ann_state_dict.values())
+        ann_weights_index = 0
+        for i, layer in enumerate(target_snn_model.features):
+            if isinstance(layer, SpikingConv2DTorch):
+                print(f"SpikingConv2DTorch conv layer i={i}")
+                # First load the kernel
+                cur_ann_weight = ann_weights_list[ann_weights_index]
+                cur_ann_weight = cur_ann_weight.permute(2,3,1,0)        # adapt the kernel shape [k,k,in,out]
+                layer.kernel.data.copy_(cur_ann_weight)
+                ann_weights_index += 1
+
+                # Then load the bias 
+                bias_weight = ann_weights_list[ann_weights_index]
+                layer.bias.data.copy_(bias_weight)
+                ann_weights_index += 1
+
+                # Skip the 'BN' parameters
+                ann_weights_index += 2
+
+            else: 
+                print(f"General layer i={i}")
+
+
+        for i, layer in enumerate(target_snn_model.classifier):
+            if isinstance(layer, SpikingDenseTorch):
+                print(f"SpikingDenseTorch linear layer i={i}")
+                # First copy the kernel
+                cur_ann_weight = ann_weights_list[ann_weights_index]
+                cur_ann_weight = cur_ann_weight.T       # transpose to adapt
+                layer.kernel.data.copy_(cur_ann_weight)
+                ann_weights_index += 1
+
+                # Then copy the bias into D_i
+                bias_weight = ann_weights_list[ann_weights_index]
+                layer.D_i.data.copy_(bias_weight)
+                ann_weights_index += 1
+            else: 
+                print(f"General layer i={i}")
+    else: 
+        print("\n\n Loading the weights from the preprocessed.h5 tensorflow path")
+        import h5py
+        tf_weigths_path = "../logs/CIFAR10-VGG_BN_new_preprocessed.h5"
+        # Load the .h5 file
+        h5_file = h5py.File(tf_weigths_path, "r")
+
+        # Iterate through modules that have custom names
+        for _, module in target_snn_model.named_modules():
+            if hasattr(module, "name") and module.name in h5_file:
+
+                group = h5_file[module.name]
+
+                # --- Conv or Dense kernel ---
+                if hasattr(module, "kernel") or hasattr(module, "weight"):
+                    if "kernel:0" in group:
+                        raw_kernel = group["kernel:0"][:]
+                        kernel = torch.tensor(raw_kernel)
+
+                        # Decide whether to transpose based on module type
+                        if isinstance(module, nn.Linear):
+                            kernel = kernel.T  # Transpose ONLY for Linear layers
+                            target = module.weight
+                        elif hasattr(module, "kernel"):
+                            target = module.kernel
+                        else:
+                            target = module.weight
+
+                        if kernel.shape == target.shape:
+                            target.data.copy_(kernel.to(target.dtype))
+                            print(f"✅ Loaded kernel into {module.name}")
+                        else:
+                            print(f"⚠️ Kernel shape mismatch in {module.name}: expected {target.shape}, got {kernel.shape}")
+
+                # --- Conv or Dense bias ---
+                if hasattr(module, "bias") and "bias:0" in group:
+                    bias = torch.tensor(group["bias:0"][:])
+                    if bias.shape == module.bias.shape:
+                        module.bias.data.copy_(bias.to(module.bias.dtype))
+                        print(f"✅ Loaded bias into {module.name}")
+                    else:
+                        print(f"⚠️ Bias shape mismatch in {module.name}: expected {module.bias.shape}, got {bias.shape}")
+
+                if hasattr(module, "sign") and "sign:0" in group:
+                    sign = torch.tensor(group["sign:0"][:]).permute(0, 3, 1, 2)  # NHWC → NCHW
+
+                    if module.sign is None:
+                        print(f"⚠️ Module sign is NONE ! in {module.name}")
+                        module.register_buffer("sign", torch.empty_like(sign))
+
+                    if sign.shape == module.sign.shape:
+                        module.sign.data.copy_(sign.to(module.sign.dtype))
+                        print(f"✅ Loaded sign into {module.name}")
+                    else:
+                        print(f"⚠️ Sign shape mismatch in {module.name}: expected {module.sign.shape}, got {sign.shape}")
+
+                
+                if hasattr(module, "D_i") and "bias:0" in group:
+                    D_i = torch.tensor(group["bias:0"][:])
+                    if D_i.shape == module.D_i.shape:
+                            module.D_i.data.copy_(D_i.to(module.D_i.dtype))
+                            print(f"✅ Loaded D_i into {module.name}")
+                    else:
+                        print(f"⚠️ D_i shape mismatch in {module.name}: expected {module.D_i.shape}, got {D_i.shape}")
 
 
 def preprocess_relu(model):
@@ -357,8 +512,8 @@ def fuse_imaginary_bn_input(fused_model, orig_model_features, p, q):
             print("!!! Cannot apply batch norm at first layer ")      
             exit(1)      
 
-    # return i=3 so that we can skip the 
-    return 3
+    # return i=2 so that we will skip the first 2 normalized layers (from above) in the main loop
+    return 2
 
 def fuse_bn_after_activation(fused_model, orig_model_features, i):
     breakpoint()
@@ -609,13 +764,11 @@ def preprocess_relu(model, p, q, batch_normalization=True):
 
     else: 
         print("Create a copy of the model with no batch normalization")
-        copy_model(model, p, q)
+        model = copy_model(model, p, q)
 
 
-    for i, layer in enumerate(model.features):
-        print(f"{i} - {layer}")
+    print(model)
     
-
     # if batch_normalization:
     #     model = fuse_bn(model.features, p, q)
     #     print("Remove dropout")

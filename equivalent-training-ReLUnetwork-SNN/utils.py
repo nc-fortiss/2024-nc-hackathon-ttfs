@@ -9,6 +9,7 @@ import tensorflow as tf
 TRAIN_SHIFT = True
 LOGGING_DIR = ''
 BATCHES = 0
+DEBUG_MODE = False
 
 def set_up_logging(logging_dir, model_name):
     """
@@ -151,7 +152,14 @@ class MaxMinPool2D(tf.keras.layers.MaxPool2D):
         self.sign=tf.Variable(tf.constant(np.ones((1, 1, 1, input_shape[-1]))), dtype=tf.float64, name='sign', trainable=False)
     def call(self, inputs):
         # Max pooling functionality is called on (self.sign*inputs) input. 
-        return super().call(self.sign*inputs)*self.sign
+
+        if DEBUG_MODE:
+            breakpoint()
+
+        res = super().call(self.sign*inputs)*self.sign
+        i = 0
+
+        return res
 
 
 def copy_layer(orig_layer):
@@ -210,7 +218,6 @@ def fuse_bn(model, p, q, optimizer, BN = True, BN_before_ReLU = False):
     # If condition is satisfied, there is an imaginary batch normalization layer which is merged.
     if not (p==0 and q==1): i = fuse_imaginary_bn(fused_model, model, p, q)
     print(fused_model.layers)
-    breakpoint()
     if BN:
         # There are batch normalization layers.
         if BN_before_ReLU:
@@ -254,6 +261,7 @@ def fuse_bn(model, p, q, optimizer, BN = True, BN_before_ReLU = False):
         print("Create copy model")
         # If there is no batch normalization layers, copy model such that Conv2D and MaxPooling layers are replaced with ConvWithBias and MaxMinPooling respectively. 
         copy_model(fused_model, model, i)
+        breakpoint()
     fused_model.compile(metrics=['accuracy'], loss=tf.keras.losses.CategoricalCrossentropy(from_logits=True), optimizer=optimizer)  
     return fused_model
 

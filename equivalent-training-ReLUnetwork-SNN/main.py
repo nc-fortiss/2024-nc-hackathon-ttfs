@@ -103,8 +103,7 @@ model.summary()
 model.last_dense = list(filter(lambda x : 'dense' in x.name, model.layers))[-1]
 
 
-
-
+        
 if args.load != 'False':
     logging.info("#### Loading weights ####")
     if 'ReLU' in args.model_type:
@@ -136,6 +135,14 @@ if args.load != 'False':
             model = create_vgg_model_SNN(layers2D, kernel_size, layers1D, data, optimizer, X_n=X_n, robustness_params=robustness_params,
                                      kernel_regularizer=regularizer, kernel_initializer=initializer)
         
+        logging.info("\n\n### Printing the model weights BEFORE loading: (VGG SNN):")
+        for layer in model.layers:
+            print(f"Layer: {layer.name}")
+            for weight in layer.weights:
+                print(f"  {weight.name} — shape: {weight.shape}")
+
+
+
         def explore_group(g, indent=0):
             for key in g:
                 item = g[key]
@@ -144,6 +151,9 @@ if args.load != 'False':
                     explore_group(item, indent + 1)
                 elif isinstance(item, h5py.Dataset):
                     print("  " * indent + f"{key}: shape={item.shape}")
+
+
+
                 else:
                     print("  " * indent + f"{key}: unknown type {type(item)}")
 
@@ -157,12 +167,25 @@ if args.load != 'False':
 
             # model.load_weights(args.logging_dir + '/' + args.model_name + '_full_SNN_weights.h5', by_name=True)
         # check if a convertible ANN model exists
-        elif os.path.exists(args.logging_dir + args.model_name + '_preprocessed.h5'):
+        if os.path.exists(args.logging_dir + args.model_name + '_preprocessed.h5'):
+            logging.info("### Loading preprocessed ANN model weights - from preprocessed file: ###\n\n")
             model.load_weights(args.logging_dir + args.model_name + '_preprocessed.h5', by_name=True)
+
+            with h5py.File(args.logging_dir + args.model_name + '_preprocessed.h5') as f:
+                explore_group(f)
+
+            logging.info("\n\n### Printing the model weights AFTER loading: (VGG SNN):")
+            for layer in model.layers:
+                print(f"Layer: {layer.name}")
+                for weight in layer.weights:
+                    print(f"  {weight.name} — shape: {weight.shape}")
+
+            logging.info("\n\n Printing the model instance after loading the weights: ")
+            logging.info(model.summary())
         else: 
             logging.info("### !! There are no pre-trained weights to load for the SNN !!")
             exit(1)
-
+        
 
 
 if 'SNN' in args.model_type:
@@ -173,16 +196,24 @@ if 'SNN' in args.model_type:
         if 'conv' in layer.name or 'dense' in layer.name:
             t_min, t_max = layer.set_params(t_min, t_max)
             logging.info(f"layer_{n}: set t_min={layer.t_min}, t_max={layer.t_max}, B_n={layer.B_n}")
+        
+        if 'conv' in layer.name:
+            logging.info(f"BN={layer.BN} , BN_before_relu={layer.BN_before_ReLU}")
+
+
+        # if 'dense' in layer.name: 
+        #     logging.info(f"layer_{n}: D_i={layer.D_i}")
+        #     breakpoint()
     logging.info("\n\n")
    
-# if args.testing != False:
-#     logging.info("#### Initial test set accuracy testing ####")
-#     test_acc = model.evaluate(data.x_test, data.y_test, batch_size=args.batch_size)
-#     logging.info("Initial testing accuracy is {}.".format(test_acc))
+
+if args.testing != False:
+    logging.info("#### Initial test set accuracy testing ####")
+    test_acc = model.evaluate(data.x_test, data.y_test, batch_size=args.batch_size)
+    logging.info("Initial testing accuracy is {}.".format(test_acc))
 
 ### Plot input coding
-image_index = 15
-
+image_index = 0
 fig, ax = plt.subplots(1, 3, figsize=(12, 8))
 (x_train,y_train), (x_test,y_test)=tf.keras.datasets.cifar10.load_data()
 x_original = x_train[image_index]
@@ -243,54 +274,63 @@ model(x_expanded)
 
 # plt.show()
 
-# spike_times, t_max_values = [], []
-# model = tf.keras.Model(inputs=model.inputs, outputs=model.outputs[0])
-# layer_names = []
-# for k, layer in enumerate(model.layers):
+################################# TRY AND PLOT A FORWARD PASS #####################################
+spike_times, t_max_values = [], []
+model = tf.keras.Model(inputs=model.inputs, outputs=model.outputs[0])
+layer_names = []
+for k, layer in enumerate(model.layers):
 
-#     if 'conv2d' in layer.name or 'dense' in layer.name:
-#         if k!=len(model.layers)-2:
-#             spike_times.append(layer.output)
-#             t_max_values.append(layer.t_max)
-#             layer_names.append(layer.name)
+    if 'conv2d' in layer.name or 'dense' in layer.name:
+        if k!=len(model.layers):
+            spike_times.append(layer.output)
+            t_max_values.append(layer.t_max)
+            layer_names.append(layer.name)
         
-# model.compile(metrics=["categorical_accuracy"], loss=tf.keras.losses.CategoricalCrossentropy(from_logits=True),
-#                 optimizer=optimizer)    
+model.compile(metrics=["categorical_accuracy"], loss=tf.keras.losses.CategoricalCrossentropy(from_logits=True),
+                optimizer=optimizer)    
 
 
-# extractor_spks = tf.keras.Model(inputs=model.inputs, outputs=spike_times)
-# output_intermediate_spikes = extractor_spks.predict(x_expanded, verbose=1)
+extractor_spks = tf.keras.Model(inputs=model.inputs, outputs=spike_times)
+output_intermediate_spikes = extractor_spks.predict(x_expanded, verbose=1)
 
+# utils.DEBUG_MODE = True
+x_expanded = tf.expand_dims(x, axis=0)
+print("mean(x)=", np.mean(x_expanded))
+y = model(x_expanded)
+print(y)
+print(f"\n\n len(output_intermediate_spikes={len(output_intermediate_spikes)})")
+plt.figure(figsize=(10,6))
+# Plot latency distribution
+if output_intermediate_spikes is None:
+    print("there is nothing to plottttt")
+for i in range(len(output_intermediate_spikes)):
+    t_max_layer = t_max_values[i].numpy()
+    output_flat = output_intermediate_spikes[i].flatten()
+    # output_flat = output_flat[output_flat < t_max_layer]
+    # Plot the combined histogram
+    output_shape = output_flat.shape[0]
+    plt.hist(output_flat, bins=10, label=f'{layer_names[i]} - N={output_shape}')
+
+    print(f"--- {layer.name} ---")
+    print(f"--- mean={np.mean(output_flat)}; min={np.min(output_flat)}; max={np.max(output_flat)}")
+
+plt.title('Layer-wise Activations - CIFAR10 VGG16 Inference')
+plt.xlabel('Spiking Time')
+plt.ylabel('Frequency')
+plt.legend(loc='upper left')
+plt.grid(True)
+plt.show()
+
+# #### REPEAT ####
+# image_index = 3
+# x = data.x_train[image_index]
 # x_expanded = tf.expand_dims(x, axis=0)
-# model(x_expanded)
-
-# plt.figure(figsize=(10,6))
-# # Plot latency distribution
-# if output_intermediate_spikes is None:
-#     print("there is nothing to plottttt")
-# for i in range(len(output_intermediate_spikes)):
-#     t_max_layer = t_max_values[i].numpy()
-#     output_flat = output_intermediate_spikes[i].flatten()
-#     # output_flat = output_flat[output_flat < t_max_layer]
-#     # Plot the combined histogram
-#     if i == 13: break
-#     output_shape = output_flat.shape[0]
-#     plt.hist(output_flat, bins=10, density=True, label=f'{layer_names[i]} - N={output_shape}')
-
-#     print(f"--- {layer.name} ---")
-#     print(f"--- mean={np.mean(output_flat)}; min={np.min(output_flat)}; max={np.max(output_flat)}")
-
-# plt.title('Layer-wise Activations - CIFAR10 VGG16 Inference')
-# plt.xlabel('Spiking Time')
-# plt.ylabel('Frequency')
-# plt.legend(loc='upper left')
-# plt.grid(True)
-# plt.show()
+# y = model(x_expanded)
+# print(y)
 
 
-
-
-# breakpoint()
+utils.DEBUG_MODE = False
+breakpoint()
 
 if args.epochs > 0:
     logging.info("#### Training ####")
@@ -323,6 +363,18 @@ if args.save and 'ReLU' in args.model_type:
     BN = 'BN' in args.model_name 
     model = fuse_bn(model, BN=BN, p=data.p, q=data.q, optimizer=optimizer)
     logging.info(model.summary())
+
+    for layer in model.layers:
+        print(f"Layer: {layer.name}")
+        for weight in layer.weights:
+            print(f"  {weight.name} — shape: {weight.shape}")
+
+
+    ##################################################################################################################
+    ### TRY FORWARD PASS ON FUSED MODEL 
+    x = data.x_train[0]
+    x_expanded = tf.expand_dims(x, axis=0)
+    y = model(x_expanded)
 
     # 2. Save preprocessed ReLU model.
     model.save_weights(args.logging_dir + '/' + args.model_name + '_preprocessed.h5')

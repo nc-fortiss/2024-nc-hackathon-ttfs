@@ -309,12 +309,16 @@ def plot_output_spikes(data_path, model=None, log_scale=False, relative_scale=Fa
     layer_num = 0
     for k,v in activations.items():
         activations_np = np.round(np.array(v),decimals=2)
-        layer_t_max = model.hidden_layers[layer_num].t_max
-        print(f"layer_{k}.t_min={np.min(activations_np)}    max activations N={np.sum(activations_np == np.round(layer_t_max,2))}")
+
+        # if 'FC' in model.name:
+        #     layer_t_max = model.hidden_layers[layer_num].t_max
+        # else: 
+        #     layer_t_max = 
+        # print(f"layer_{k}.t_min={np.min(activations_np)}    max activations N={np.sum(activations_np == np.round(layer_t_max,2))}")
 
         # If the 'relative_scale' flag is enabled, the activations are plotted on an equivalent scale 
         # relative to the respective layer's t_max, rather than being plotted on an absolute time scale
-        if relative_scale: activations_np = layer_t_max - activations_np
+        # if relative_scale: activations_np = layer_t_max - activations_np
 
         # activations_np = activations_np[activations_np < layer_t_max]
 
@@ -324,27 +328,57 @@ def plot_output_spikes(data_path, model=None, log_scale=False, relative_scale=Fa
 
     # --- interval boundaries
     if model and not relative_scale:
-        for i, layer in enumerate(model.hidden_layers):
-            t_min=layer.t_min
-            t_max=layer.t_max
-            plt.axvline(x=t_min, color='r', linestyle='--', linewidth=1, alpha=0.7)
-            plt.axvline(x=t_max, color='r', linestyle='--', linewidth=1, alpha=0.7)
 
-            if i == 0: 
-                plt.text(t_min + 0.2, plt.ylim()[1]*0.9, 't_min_0', va='top')
-            elif i == len(model.hidden_layers)-1: 
-                plt.text(t_min + 0.2, plt.ylim()[1]*0.9, f't_max_{i-1}\nt_min_{i}', va='top')
-                plt.text(t_max + 0.2, plt.ylim()[1]*0.9, f't_max_{i+1}', va='top')
-            else: 
-                plt.text(t_min + 0.2, plt.ylim()[1]*0.9, f't_max_{i-1}\nt_min_{i}', va='top')
+        if 'FC' in model.name:
+            for i, layer in enumerate(model.hidden_layers):
+                t_min=layer.t_min
+                t_max=layer.t_max
+                plt.axvline(x=t_min, color='r', linestyle='--', linewidth=1, alpha=0.7)
+                plt.axvline(x=t_max, color='r', linestyle='--', linewidth=1, alpha=0.7)
+
+                if i == 0: 
+                    plt.text(t_min + 0.2, plt.ylim()[1]*0.9, 't_min_0', va='top')
+                elif i == len(model.hidden_layers)-1: 
+                    plt.text(t_min + 0.2, plt.ylim()[1]*0.9, f't_max_{i-1}\nt_min_{i}', va='top')
+                    plt.text(t_max + 0.2, plt.ylim()[1]*0.9, f't_max_{i+1}', va='top')
+                else: 
+                    plt.text(t_min + 0.2, plt.ylim()[1]*0.9, f't_max_{i-1}\nt_min_{i}', va='top')
+        else:
+            for i, layer in enumerate(model.features):
+                if isinstance(layer, SpikingConv2DTorch):
+                    t_min=layer.t_min
+                    t_max=layer.t_max
+                    plt.axvline(x=t_min, color='r', linestyle='--', linewidth=1, alpha=0.7)
+                    plt.axvline(x=t_max, color='r', linestyle='--', linewidth=1, alpha=0.7)
+
+                    if i == 0: 
+                        plt.text(t_min + 0.2, plt.ylim()[1]*0.9, 't_min_0', va='top')
+                    elif i == len(model.features)-1: 
+                        plt.text(t_min + 0.2, plt.ylim()[1]*0.9, f't_max_{i-1}\nt_min_{i}', va='top')
+                        plt.text(t_max + 0.2, plt.ylim()[1]*0.9, f't_max_{i+1}', va='top')
+                    else: 
+                        plt.text(t_min + 0.2, plt.ylim()[1]*0.9, f't_max_{i-1}\nt_min_{i}', va='top')
+            for i, layer in enumerate(model.classifier):
+                if isinstance(layer, SpikingDenseTorch):
+                    t_min=layer.t_min
+                    t_max=layer.t_max
+                    plt.axvline(x=t_min, color='r', linestyle='--', linewidth=1, alpha=0.7)
+                    plt.axvline(x=t_max, color='r', linestyle='--', linewidth=1, alpha=0.7)
+
+                    if i == 0: 
+                        plt.text(t_min + 0.2, plt.ylim()[1]*0.9, 't_min_0', va='top')
+                    elif i == len(model.classifier)-1: 
+                        plt.text(t_min + 0.2, plt.ylim()[1]*0.9, f't_max_{i-1}\nt_min_{i}', va='top')
+                        plt.text(t_max + 0.2, plt.ylim()[1]*0.9, f't_max_{i+1}', va='top')
+                    else: 
+                        plt.text(t_min + 0.2, plt.ylim()[1]*0.9, f't_max_{i-1}\nt_min_{i}', va='top')
 
     
     plt.title(additional_title + f'\n\nDistribution of Spike Activations - N={total}')
     plt.xlabel('Spike Time Activation')
     plt.ylabel('Frequency')
-    if relative_scale: plt.xlim(0, 8)
-    else: plt.xlim(0, layer.t_max + 0.1*layer.t_max)
-    plt.ylim(0, 340)
+    # if relative_scale: plt.xlim(0, 8)
+    # else: plt.xlim(0, layer.t_max + 0.1*layer.t_max)
     plt.legend(loc='center left')
     plt.show()
 

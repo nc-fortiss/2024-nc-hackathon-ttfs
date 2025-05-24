@@ -80,9 +80,11 @@ def evaluate_FC_SNN(model, test_loader):
             test_loss += torch.nn.functional.cross_entropy(output_logits, truth_labels).item()
 
             total += len(inputs)
-            if (total % 500) == 0:
+            if (total % 400) == 0:
                 accuracy = 100 * correct / total 
                 print(f"{total} samples -- acc={round(accuracy,3)}")
+                print(f"Predicted: {predicted_labels}")
+                print(f"Correct: {truth_labels}")
 
     accuracy = 100 * correct / len(test_loader.dataset)
     test_loss /= len(test_loader)

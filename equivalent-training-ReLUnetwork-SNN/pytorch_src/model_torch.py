@@ -7,7 +7,6 @@ import config_utils
 import h5py
 import math
 import pickle
-from train_torch import evaluate_FC_SNN
 import matplotlib.pyplot as plt
 
 # import pdb   # debugger
@@ -20,6 +19,7 @@ def call_spiking(tj, W, D_i, t_min_prev, t_min, t_max, robustness_params):
     # if config_utils.DEBUG_MODE:
     #     breakpoint()
     # Calculate the spiking threshold (Eq. 18)
+    # breakpoint()
     threshold = t_max - t_min - D_i
     # Calculate output spiking time ti (Eq. 7)
     ### Debugging only ###
@@ -37,6 +37,8 @@ def call_spiking(tj, W, D_i, t_min_prev, t_min, t_max, robustness_params):
     # TODO: how to set ti if ti >= t_max_quantized
     
     ti = torch.where(ti < t_max, ti, t_max)
+    print(f"spikes={(ti < t_max).sum().item()}")
+
     # Add noise to the spiking time for noise simulations
     ti = ti + torch.normal(mean=0.0, std=0.0, size=ti.shape, dtype=torch.float64)
     return ti
@@ -147,8 +149,11 @@ class SpikingDenseTorch(nn.Module):
             The input 'tj' represents the spike times that were integrated 
             from the previous layer, thus transforming them into output spike times 'ti'
         '''
+        # breakpoint()
+        # config_utils.DEBUG_MODE = True
         ti = call_spiking(tj, self.kernel, self.D_i, self.t_min_prev, self.t_min, self.t_max, self.robustness_params)
         if (self.is_output):
+            # breakpoint()
             W_mult_x = torch.matmul(self.t_min-tj, self.kernel)
             self.alpha = self.D_i/(self.t_min-self.t_min_prev)
             ti = self.alpha * (self.t_min - self.t_min_prev) + W_mult_x
@@ -241,7 +246,7 @@ class SpikingConv2DTorch(nn.Module):
         self.BN_before_ReLU = 0
 
         # D_i: shape = (9, filters) for different padding cases
-        self.D_i = nn.Parameter(torch.zeros((9, filters), dtype=torch.float64), requires_grad=True)
+        self.bias = nn.Parameter(torch.zeros((9, filters), dtype=torch.float64), requires_grad=True)
 
     def set_intervals(self, t_min_prev,t_min):
         ''' Sets t_min_prev, t_min, and t_max for this layer. The bounds are determined and set 
@@ -257,8 +262,7 @@ class SpikingConv2DTorch(nn.Module):
         Input spiking times tj: [B, H, W, C]
         Output spiking times ti. 
         """
-
-        print(f"### layer.name={self.name} - input.shape={tj.shape}")
+        # print(f"### layer.name={self.name} - input.shape={tj.shape}")
 
 
         image_original_size = tj.shape[2]       # image size with no padding (as input) 
@@ -318,26 +322,174 @@ class SpikingConv2DTorch(nn.Module):
         tj = patches.reshape(-1, patch_W.shape[0])
         x = 0 
         y = 0
-        ti = call_spiking(tj, patch_W, self.D_i[0], self.t_min_prev, self.t_min, self.t_max, self.robustness_params)
+        ti = call_spiking(tj, patch_W, self.bias[0], self.t_min_prev, self.t_min, self.t_max, self.robustness_params)
         # Layer output is reshaped back.
         ti = ti.reshape(-1, image_same_size, image_same_size, self.filters)
 
         
         # breakpoint()
-        print("output return: ti.shape=", ti.shape)
+        # print("output return: ti.shape=", ti.shape)
         return ti
 
+#### VERSION TO BE USED WITH THE h5-PREPROCESSED WEIGHTS FROM TENSORFLOW ####
 class VGG_SNN_torch(nn.Module):
     def __init__(self, X_n, kernel_size, robustness_params, kernel_regularizer=None, kernel_initializer=None, dropout=0):
         super().__init__()
         self.X_n = X_n
         self.kernel_size = kernel_size
+        self.name = "VGG_SNN_TORCH"
 
-        layers2D = [64, 64, 'pool', 128, 128, 'pool', 256, 256, 256, 'pool', 512, 512, 512, 'pool', 512, 512, 512, 'pool']
-        layers1D= [512]
+        # VGG_16 -> 
+        layers2D = [64, 64, 'pool', 128, 128, 'pool', 256, 256, 256, 'pool', 512, 512, 512, 'pool', 512, 512, 512, 'pool']      
+        layers1D = [512,10]
 
-        self.conv_layers = nn.ModuleList()      # Conv blocks: [Conv -> ReLU -> MaxPool]
-        self.fc_layers = nn.ModuleList()        # Fully connected
+        self.features = nn.ModuleList()      # Conv blocks: [Conv -> ReLU -> MaxPool]
+        self.classifier = nn.ModuleList()        # Fully connected
+
+        image_size = 1
+        prev_layer_dim = 3      # num channels for input image
+        conv_index = 0
+        pool_index = 0
+        X_n_index = 0
+        for filter in layers2D: 
+            if filter != 'pool':
+                X_n_layer = (X_n[X_n_index] if type(X_n)==list else X_n)
+                layer_name = 'conv2d_' + str(conv_index+1)
+                conv2d = SpikingConv2DTorch(filter, prev_layer_dim, X_n=X_n_layer, 
+                                            padding='same', name=layer_name, robustness_params=robustness_params)
+                if conv_index == 0:
+                    conv2d.first_convolutional_layer = True 
+                self.features.append(conv2d)
+                conv_index += 1
+                prev_layer_dim = filter 
+                X_n_index += 1
+
+            else: 
+                ### Append the MinMaxPool custom layer to account for a sign change 
+                if pool_index == 0: 
+                    layer_name = f'max_min_pool2d'
+                else: 
+                    layer_name = f'max_min_pool2d_{pool_index}'
+                max_min_pool = config_utils.MaxMinPool2d(name=layer_name)
+                self.features.append(max_min_pool)
+                image_size = image_size // 2
+                pool_index += 1
+
+        fc_index = 0
+        dim_in = 512
+        for dim_out in layers1D:
+            X_n_layer = (X_n[X_n_index] if type(X_n)==list else X_n)
+            layer_name = f'dense_{fc_index+1}'
+            fc_layer = SpikingDenseTorch(dim_in, dim_out, X_n=X_n_layer, name=layer_name)
+            self.classifier.append(fc_layer)
+            dim_in = dim_out
+            fc_index += 1
+            X_n_index += 1
+
+        self.classifier[-1].is_output = True 
+        
+        # Add one more dense layer for classification   
+        # # TODO: pass number of classes as layer output dimension
+        # self.fc_layer_out = SpikingDenseTorch(dim, 10, name="dense", X_n=X_n_layer, 
+                                            #   is_output=True, robustness_params=robustness_params)
+
+        # register hooks
+        self.collect_activations = False
+        self.all_activations = {}
+        for i, layer in enumerate(self.features):
+            if isinstance(layer, SpikingConv2DTorch):
+                layer.register_forward_hook(self.get_activations(layer.name))
+        
+        for i, layer in enumerate(self.classifier):
+            if isinstance(layer, SpikingDenseTorch):
+                layer.register_forward_hook(self.get_activations(layer.name))
+
+
+    def forward(self, input_spikes):
+
+        # print("\nVGG model call: tj.shape=", input_spikes.shape)
+
+        x = input_spikes
+        # breakpoint()
+        for i, conv_block in enumerate(self.features):
+            if isinstance(conv_block, SpikingConv2DTorch):
+                # print(f"### Convolution {i}")
+                x = conv_block(x)
+            else: 
+                # input to maxPool2d must be permuted again 
+                # print("### MaxPool2d")
+
+                x = -x 
+                x = x.permute(0, 3, 1, 2)
+                x = conv_block(x)
+                x = x.permute(0, 2, 3, 1)   # permute back for convolution
+                x = -x
+        x = torch.flatten(x, 1)
+
+        for layer in self.classifier:
+            x = layer(x)
+
+        return x
+    def set_snn_intervals(self, t_min_start=0, t_max_start=1):
+        # Helper function to create the [t_min, t_max] boundaries for the 
+        #    integrate vs spike time windows for each layer. 
+        #     't_min_start' and 't_max_start' define the min/max time values in the input layer. 
+        # 
+        t_min, t_max= t_min_start, t_max_start
+        layer_num = 0
+
+        for conv_layer in self.features:
+            if isinstance(conv_layer, SpikingConv2DTorch):
+                print("Setting SNN intervals in SpikingConv2DTorch")
+                t_min, t_max = conv_layer.set_intervals(t_min, t_max)
+            else: 
+                print("Skipping because of maxpool")
+        
+        for fc_layer in self.classifier: 
+            if isinstance(fc_layer, SpikingDenseTorch):
+                print("Setting SNN intervals in SpikingDenseLayer")
+                t_min, t_max = fc_layer.set_intervals(t_min, t_max)
+    
+
+    def get_activations(self, layer_name):
+        '''
+            Collects the activations from the outputs of each layer. 
+            @layer_name: string, name of the layer
+        '''
+        def hook(model, input, output):
+            # Collect the output spikes time during a forward call
+            if self.collect_activations:
+                if layer_name not in self.all_activations:
+                    self.all_activations[layer_name] = []     
+                self.all_activations[layer_name].extend(output.flatten().detach().cpu().tolist())
+        return hook
+
+    def dump_activations(self, path):
+        '''
+        Dumps all the layer-wise collected activations into the .npy file specified
+        at 'path'. It also clears the dictionary 'self.activations' to make space for 
+        later further collections. 
+        '''
+        with open(path, "wb") as f:
+            pickle.dump(self.all_activations, f)
+        self.all_activations = {}
+    
+
+
+'''   ##################################       VERSION FOR ANN-SNN conversion fully inside torch  ##############################
+class VGG_SNN_torch(nn.Module):
+    def __init__(self, X_n, kernel_size, robustness_params, kernel_regularizer=None, kernel_initializer=None, dropout=0):
+        super().__init__()
+        self.X_n = X_n
+        self.kernel_size = kernel_size
+        self.name = "VGG_SNN_TORCH"
+
+        # VGG_19 -> 
+        layers2D = [64, 64, 'pool', 128, 128, 'pool', 256, 256, 256, 256, 'pool', 512, 512, 512, 512, 'pool', 512, 512, 512, 512, 'pool']
+        layers1D= [512, 512, 10]
+
+        self.features = nn.ModuleList()      # Conv blocks: [Conv -> ReLU -> MaxPool]
+        self.classifier = nn.ModuleList()        # Fully connected
 
         image_size = 1
         prev_layer_dim = 3      # num channels for input image
@@ -345,73 +497,82 @@ class VGG_SNN_torch(nn.Module):
         for filter in layers2D: 
             if filter != 'pool':
                 X_n_layer = (X_n[conv_index] if type(X_n)==list else X_n)
-                layer_name = 'conv_' + str(conv_index)
+                layer_name = 'conv2d_' + str(conv_index+1)
                 conv2d = SpikingConv2DTorch(filter, prev_layer_dim, X_n=X_n_layer, 
                                             padding='same', name=layer_name, robustness_params=robustness_params)
                 if conv_index == 0:
                     conv2d.first_convolutional_layer = True 
-                self.conv_layers.append(conv2d)
+                self.features.append(conv2d)
                 conv_index += 1
                 prev_layer_dim = filter 
 
             else: 
-                self.conv_layers.append(nn.MaxPool2d(kernel_size=2, stride=2))
+                self.features.append(nn.MaxPool2d(kernel_size=2, stride=2))
                 image_size = image_size // 2
 
-        # fc_index = 0
-        # for dim in layers1D[1:]:
-        #     X_n_layer = (X_n[fc_index] if type(X_n)==list else X_n)
-        #     fc_layer = SpikingDenseTorch(dim, dim, X_n=X_n_layer)
-        #     self.fc_layers.append(fc_layer)
-        #     fc_index += 1
+        fc_index = 0
+        dim_in = 512
+        for dim_out in layers1D:
+            X_n_layer = (X_n[fc_index] if type(X_n)==list else X_n)
+            layer_name = f'dense_{fc_index+1}'
+            fc_layer = SpikingDenseTorch(dim_in, dim_out, X_n=X_n_layer, name=layer_name)
+            self.classifier.append(fc_layer)
+            dim_in = dim_out
+            fc_index += 1
+
+        self.classifier[-1].is_output = True 
+
 
         # Add one more dense layer for classification   
         # # TODO: pass number of classes as layer output dimension
-        dim = layers1D[0]
-        self.fc_layer_out = SpikingDenseTorch(dim, 10, name="dense", X_n=X_n_layer, 
-                                              is_output=True, robustness_params=robustness_params)
+        # self.fc_layer_out = SpikingDenseTorch(dim, 10, name="dense", X_n=X_n_layer, 
+                                            #   is_output=True, robustness_params=robustness_params)
 
 
     def forward(self, input_spikes):
 
-        print("\nVGG model call: tj.shape=", input_spikes.shape)
+        # print("\nVGG model call: tj.shape=", input_spikes.shape)
 
         x = input_spikes
 
-        for i, conv_block in enumerate(self.conv_layers):
+        for i, conv_block in enumerate(self.features):
             if isinstance(conv_block, SpikingConv2DTorch):
-                print(f"### Convolution {i}")
+                # print(f"### Convolution {i}")
                 x = conv_block(x)
             else: 
                 # input to maxPool2d must be permuted again 
-                print("### MaxPool2d")
+                # print("### MaxPool2d")
                 x = x.permute(0, 3, 1, 2)
                 x = conv_block(x)
                 x = x.permute(0, 2, 3, 1)   # permute back for convolution
 
         x = torch.flatten(x, 1)
 
-        # for layer in self.fc_layers:
-        #     x = layer(x)
+        for layer in self.classifier:
+            x = layer(x)
 
-        x = self.fc_layer_out(x)
         return x
-    
     def set_snn_intervals(self, t_min_start=0, t_max_start=1):
-        ''' Helper function to create the [t_min, t_max] boundaries for the 
-            integrate vs spike time windows for each layer. 
-            't_min_start' and 't_max_start' define the min/max time values in the input layer. 
-        '''
+        # Helper function to create the [t_min, t_max] boundaries for the 
+        #    integrate vs spike time windows for each layer. 
+        #     't_min_start' and 't_max_start' define the min/max time values in the input layer. 
+        # 
         t_min, t_max= t_min_start, t_max_start
         layer_num = 0
 
-        for conv_layer in self.conv_layers:
+        for conv_layer in self.features:
             if isinstance(conv_layer, SpikingConv2DTorch):
+                print("Setting SNN intervals in SpikingConv2DTorch")
                 t_min, t_max = conv_layer.set_intervals(t_min, t_max)
             else: 
-                print("setting maxpool")
+                print("Skipping because of maxpool")
         
-        self.fc_layer_out.set_intervals(t_min, t_max)
+        for fc_layer in self.classifier: 
+            if isinstance(fc_layer, SpikingDenseTorch):
+                print("Setting SNN intervals in SpikingDenseLayer")
+                t_min, t_max = fc_layer.set_intervals(t_min, t_max)
+'''
+
 
 class VGG_ReLU_torch(nn.Module):
     def __init__(self, layers2D=[], kernel_size=(3,3), layers1D=[], BN=0, dropout=0, kernel_regularizer=None, kernel_initializer=None):
@@ -434,8 +595,6 @@ class VGG_ReLU_torch(nn.Module):
             nn.Dropout(),
             nn.Linear(4096, num_classes)
         )
-
-
 
     def _create_conv_layers(self, filters, in_channels):
 
@@ -463,6 +622,7 @@ class VGG_ReLU_torch(nn.Module):
         x = self.classifier(x)
         return x
 
+'''
 class VGG_ANN_torch(nn.Module):
     def __init__(self, features_list, batch_norm=False):
         super(VGG_ANN_torch, self).__init__()
@@ -483,6 +643,9 @@ class VGG_ANN_torch(nn.Module):
                 m.weight.data.normal_(0, math.sqrt(2. / n))
                 m.bias.data.zero_()
 
+        self.collect_activations = False 
+        self.max_activations = {}
+        self.register_max_activation_forward_hooks()
 
     def forward(self, x):
         x = self.features(x)
@@ -504,7 +667,36 @@ class VGG_ANN_torch(nn.Module):
                     layers += [conv2d, nn.ReLU(inplace=True)]
                 in_channels = v
         return nn.Sequential(*layers)
+    
+    def register_max_activation_forward_hooks(self):
+        for i, layer in enumerate(self.features):
+            if isinstance(layer, nn.Conv2d) or isinstance(layer,config_utils.Conv2dWithBias):
+                layer.register_forward_hook(self.get_max_activation(f"layer_{i}"))
+        
+        for i, layer in enumerate(self.classifier):
+            if isinstance(layer, nn.Linear):
+                layer.register_forward_hook(self.get_max_activation(f"layer_{i}"))
 
+    def get_max_activation(self, name):
+            Returns the maximum activation for a single layer during a forward pass.
+            The max is updated for each individual batch (at each forward call). 
+            Therefore, when predicting with a dataset, model.max_activations will store
+            the maximum activation value across all batches in the training set.
+
+            Function implementation also adapted from: https://web.stanford.edu/~nanbhas/blog/forward-hooks-pytorch/#using-the-forward-hooks (Accessed 27/03/25)
+
+            @name: string, name of the layer
+        def hook(model, input, output):
+            relu_output = F.relu(output)
+            batch_max = torch.max(relu_output).item()
+            if name not in self.max_activations:
+                self.max_activations[name] = batch_max
+            else:
+                self.max_activations[name] = max(self.max_activations[name], batch_max)
+
+        return hook
+'''
+        
 class FC_ReLU_torch(nn.Module):
     ''' Defines instance of a fully-connected ReLU network
 
@@ -624,7 +816,7 @@ class FC_SNN_torch(nn.Module):
         self.N_in = N_in 
         self.N_out = N_out 
         self.X_n = X_n
-
+        self.name = 'FC_SNN_torch'
         self.N = lambda l: (N_hid[l-1] if type(N_hid)==list else N_hid)
 
         # Initialize list of hidden layer modules and append 1st default hidden layer
@@ -743,6 +935,7 @@ class FC_SNN_torch(nn.Module):
             exactly at t_min (for the sample that produced the same global minimum)
 
         '''
+        from train_torch import evaluate_FC_SNN
         extend_margin = 0.1
         self.min_spike_times = {}       # reset minimum spike times
         self.collect_activations = False        # no need to collect activations during evaluation here
@@ -867,8 +1060,8 @@ def create_torch_VGG_model_SNN(X_n, kernel_size):
     robustness_params = {'latency_quantiles': 1}
     return VGG_SNN_torch(X_n, kernel_size, robustness_params=robustness_params)
 
-def create_torch_VGG_model_ReLU():
-    return VGG_ReLU_torch()
+# def create_torch_VGG_model_ReLU():
+#     return VGG_ReLU_torch()
 
 def create_torch_VGG_model_ANN(features_list, batch_norm=False):
     
